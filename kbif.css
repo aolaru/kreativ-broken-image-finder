@@ -1,0 +1,26 @@
+#kbif-progress-wrapper {
+    margin-top: 15px;
+    display: none;
+    max-width: 600px;
+}
+
+#kbif-progress-container {
+    width: 100%;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #d1d5db;
+}
+
+#kbif-progress-bar {
+    width: 0%;
+    height: 22px;
+    background: #4A4AFF;
+    border-radius: 4px;
+    transition: width 0.25s linear;
+}
+
+#kbif-progress-text {
+    margin-top: 8px;
+    font-weight: 600;
+}
