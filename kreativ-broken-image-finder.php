@@ -3,7 +3,7 @@
  * Plugin Name:       Kreativ Broken Image Finder
  * Plugin URI:        https://kreativfont.com/tools/kreativ-broken-image-finder-wp-plugin
  * Description:       Scan your site for broken images in posts, pages and custom post types, and get a simple report inside your dashboard.
- * Version:           1.2.0
+ * Version:           1.2.2
  * Author:            Andrei Olaru
  * Author URI:        https://kreativfont.com/
  * Text Domain:       kreativ-broken-image-finder
@@ -21,6 +21,7 @@ if ( ! class_exists( 'Kreativ_Broken_Image_Finder' ) ) :
 
 class Kreativ_Broken_Image_Finder {
 
+	const VERSION         = '1.2.2';
 	const OPTION_RESULTS  = 'kbif_last_scan_results';
 	const OPTION_STATS    = 'kbif_last_scan_stats';
 	const OPTION_QUEUE    = 'kbif_scan_queue';
@@ -67,14 +68,14 @@ class Kreativ_Broken_Image_Finder {
 			'kbif-style',
 			plugin_dir_url( __FILE__ ) . 'css/kbif.css',
 			array(),
-			'1.2.0'
+			self::VERSION
 		);
 
 		wp_enqueue_script(
 			'kbif-scan',
 			plugin_dir_url( __FILE__ ) . 'js/kbif-scan.js',
 			array( 'jquery' ),
-			'1.2.0',
+			self::VERSION,
 			true
 		);
 
@@ -101,27 +102,12 @@ class Kreativ_Broken_Image_Finder {
 		$step = isset( $_POST['step'] ) ? sanitize_text_field( wp_unslash( $_POST['step'] ) ) : '';
 
 		if ( 'init' === $step ) {
-			$post_types = get_post_types(
-				array(
-					'public' => true,
-				),
-				'names'
-			);
-			unset( $post_types['attachment'] );
+			$total = $this->count_scannable_posts();
 
-			$posts = get_posts(
-				array(
-					'post_type'      => $post_types,
-					'post_status'    => 'publish',
-					'fields'         => 'ids',
-					'posts_per_page' => -1,
-				)
-			);
-
-			update_option( self::OPTION_QUEUE, $posts );
+			delete_option( self::OPTION_QUEUE );
 
 			$stats = array(
-				'total_posts'             => count( $posts ),
+				'total_posts'             => $total,
 				'total_images_found'      => 0,
 				'broken_images'           => 0,
 				'missing_featured_images' => 0,
@@ -138,20 +124,21 @@ class Kreativ_Broken_Image_Finder {
 				self::OPTION_PROGRESS,
 				array(
 					'processed_posts' => 0,
+					'batch_size'      => 5,
 					'started_at'      => microtime( true ),
 				)
 			);
 
 			wp_send_json_success(
 				array(
-					'total' => count( $posts ),
+					'total' => $total,
 				)
 			);
 		}
 
 		if ( 'process' === $step ) {
-			$queue = get_option( self::OPTION_QUEUE, array() );
-			$total = count( $queue );
+			$stats = get_option( self::OPTION_STATS, array() );
+			$total = isset( $stats['total_posts'] ) ? intval( $stats['total_posts'] ) : 0;
 
 			if ( 0 === $total ) {
 				wp_send_json_success(
@@ -163,8 +150,9 @@ class Kreativ_Broken_Image_Finder {
 				);
 			}
 
+			$progress   = get_option( self::OPTION_PROGRESS, array() );
 			$pointer    = isset( $_POST['pointer'] ) ? max( 0, intval( $_POST['pointer'] ) ) : 0;
-			$batch_size = 5;
+			$batch_size = isset( $progress['batch_size'] ) ? max( 1, intval( $progress['batch_size'] ) ) : 5;
 
 			if ( $pointer >= $total ) {
 				wp_send_json_success(
@@ -176,14 +164,23 @@ class Kreativ_Broken_Image_Finder {
 				);
 			}
 
-			$end          = min( $pointer + $batch_size, $total );
+			$posts        = $this->get_scan_batch_posts( $pointer, $batch_size );
 			$batch_items  = array();
 			$delta_images = 0;
 			$delta_broken = 0;
 			$delta_missing = 0;
 
-			for ( $i = $pointer; $i < $end; $i++ ) {
-				$post_id   = $queue[ $i ];
+			if ( empty( $posts ) ) {
+				wp_send_json_success(
+					array(
+						'finished' => true,
+						'total'    => $total,
+						'pointer'  => $total,
+					)
+				);
+			}
+
+			foreach ( $posts as $post_id ) {
 				$scan_data = $this->scan_single_post( $post_id );
 
 				$batch_items  = array_merge( $batch_items, $scan_data['items'] );
@@ -192,7 +189,7 @@ class Kreativ_Broken_Image_Finder {
 				$delta_missing += $scan_data['missing_featured_images'];
 			}
 
-			$pointer = $end;
+			$pointer += count( $posts );
 
 			// Append results.
 			$existing_results = get_option( self::OPTION_RESULTS, array() );
@@ -200,7 +197,6 @@ class Kreativ_Broken_Image_Finder {
 			update_option( self::OPTION_RESULTS, $existing_results );
 
 			// Update stats.
-			$stats = get_option( self::OPTION_STATS, array() );
 			if ( empty( $stats ) ) {
 				$stats = array(
 					'total_posts'             => $total,
@@ -216,7 +212,6 @@ class Kreativ_Broken_Image_Finder {
 			update_option( self::OPTION_STATS, $stats );
 
 			// Update progress.
-			$progress                     = get_option( self::OPTION_PROGRESS, array() );
 			$progress['processed_posts']  = $pointer;
 			update_option( self::OPTION_PROGRESS, $progress );
 
@@ -269,6 +264,7 @@ class Kreativ_Broken_Image_Finder {
 
 		$post_title = get_the_title( $post_id );
 		$post_type  = get_post_type( $post_id );
+		$post_url   = get_permalink( $post_id );
 		$items      = array();
 
 		$images_found            = 0;
@@ -282,9 +278,9 @@ class Kreativ_Broken_Image_Finder {
 		foreach ( $content_images as $image_url ) {
 			$images_found++;
 
-            usleep(150000);
+			usleep( 150000 );
 
-			$check = $this->check_image_url( $image_url );
+			$check = $this->check_image_url( $image_url, $post_url );
 
 			if ( $check['is_broken'] ) {
 				$broken_images++;
@@ -309,7 +305,7 @@ class Kreativ_Broken_Image_Finder {
 			if ( $image_url ) {
 				$images_found++;
 
-				$check = $this->check_image_url( $image_url );
+				$check = $this->check_image_url( $image_url, $post_url );
 
 				if ( $check['is_broken'] ) {
 					$broken_images++;
@@ -384,33 +380,24 @@ class Kreativ_Broken_Image_Finder {
 	 * @param string $url Image URL.
 	 * @return array
 	 */
-	protected function check_image_url( $url ) {
+	protected function check_image_url( $url, $base_url = '' ) {
 		$result = array(
 			'is_broken'     => false,
 			'status_code'   => 0,
 			'error_message' => '',
 		);
 
-		// Normalize URL.
-		if ( 0 === strpos( $url, '//' ) ) {
-			$scheme = is_ssl() ? 'https:' : 'http:';
-			$url    = $scheme . $url;
-		} elseif ( 0 === strpos( $url, '/' ) && 0 !== strpos( $url, 'http' ) ) {
-			$home = home_url();
-			$url  = rtrim( $home, '/' ) . $url;
-		}
+		$url = $this->normalize_image_url( $url, $base_url );
 
 		if ( ! preg_match( '#^https?://#i', $url ) ) {
 			return $result;
 		}
 
-		$response = wp_remote_head(
-			$url,
-			array(
-				'timeout'     => 10,
-				'redirection' => 3,
-			)
-		);
+		$response = wp_remote_head( $url, $this->get_request_args() );
+
+		if ( $this->should_retry_with_get( $response ) ) {
+			$response = wp_remote_get( $url, $this->get_request_args() );
+		}
 
 		if ( is_wp_error( $response ) ) {
 			$result['is_broken']     = true;
@@ -432,6 +419,200 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Get public post types that should be scanned.
+	 *
+	 * @return array
+	 */
+	private function get_scannable_post_types() {
+		$post_types = get_post_types(
+			array(
+				'public' => true,
+			),
+			'names'
+		);
+
+		unset( $post_types['attachment'] );
+
+		return array_values( $post_types );
+	}
+
+	/**
+	 * Count all published posts that should be scanned.
+	 *
+	 * @return int
+	 */
+	private function count_scannable_posts() {
+		$total = 0;
+
+		foreach ( $this->get_scannable_post_types() as $post_type ) {
+			$counts = wp_count_posts( $post_type );
+
+			if ( isset( $counts->publish ) ) {
+				$total += (int) $counts->publish;
+			}
+		}
+
+		return $total;
+	}
+
+	/**
+	 * Get one scan batch of published post IDs.
+	 *
+	 * @param int $offset Batch offset.
+	 * @param int $batch_size Batch size.
+	 * @return array
+	 */
+	private function get_scan_batch_posts( $offset, $batch_size ) {
+		return get_posts(
+			array(
+				'post_type'              => $this->get_scannable_post_types(),
+				'post_status'            => 'publish',
+				'fields'                 => 'ids',
+				'posts_per_page'         => $batch_size,
+				'offset'                 => $offset,
+				'orderby'                => 'ID',
+				'order'                  => 'ASC',
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => false,
+				'update_post_term_cache' => false,
+			)
+		);
+	}
+
+	/**
+	 * Build request arguments for image checks.
+	 *
+	 * @return array
+	 */
+	private function get_request_args() {
+		return array(
+			'timeout'             => 10,
+			'redirection'         => 3,
+			'limit_response_size' => 1024,
+		);
+	}
+
+	/**
+	 * Determine whether a HEAD response should be retried with GET.
+	 *
+	 * @param array|WP_Error $response HTTP response.
+	 * @return bool
+	 */
+	private function should_retry_with_get( $response ) {
+		if ( is_wp_error( $response ) ) {
+			return true;
+		}
+
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+
+		return in_array( $status_code, array( 403, 405, 501 ), true );
+	}
+
+	/**
+	 * Normalize an image URL into an absolute HTTP(S) URL when possible.
+	 *
+	 * @param string $url Image URL from content.
+	 * @param string $base_url Base document URL.
+	 * @return string
+	 */
+	private function normalize_image_url( $url, $base_url = '' ) {
+		$url = trim( $url );
+
+		if ( '' === $url || 0 === strpos( $url, 'data:' ) ) {
+			return '';
+		}
+
+		if ( 0 === strpos( $url, '//' ) ) {
+			$scheme = is_ssl() ? 'https:' : 'http:';
+			return $scheme . $url;
+		}
+
+		if ( preg_match( '#^https?://#i', $url ) ) {
+			return $url;
+		}
+
+		if ( 0 === strpos( $url, '/' ) ) {
+			return rtrim( home_url(), '/' ) . $url;
+		}
+
+		if ( '' === $base_url || ! preg_match( '#^https?://#i', $base_url ) ) {
+			return '';
+		}
+
+		return $this->build_absolute_url_from_base( $base_url, $url );
+	}
+
+	/**
+	 * Resolve a relative URL against a base document URL.
+	 *
+	 * @param string $base_url Base document URL.
+	 * @param string $relative_url Relative image URL.
+	 * @return string
+	 */
+	private function build_absolute_url_from_base( $base_url, $relative_url ) {
+		$base_parts = wp_parse_url( $base_url );
+
+		if ( empty( $base_parts['scheme'] ) || empty( $base_parts['host'] ) ) {
+			return '';
+		}
+
+		$base_root = $base_parts['scheme'] . '://' . $base_parts['host'];
+
+		if ( ! empty( $base_parts['port'] ) ) {
+			$base_root .= ':' . $base_parts['port'];
+		}
+
+		$fragment = '';
+		$query    = '';
+
+		if ( false !== strpos( $relative_url, '#' ) ) {
+			list( $relative_url, $fragment ) = explode( '#', $relative_url, 2 );
+			$fragment = '#' . $fragment;
+		}
+
+		if ( false !== strpos( $relative_url, '?' ) ) {
+			list( $relative_url, $query ) = explode( '?', $relative_url, 2 );
+			$query = '?' . $query;
+		}
+
+		$base_path      = isset( $base_parts['path'] ) ? $base_parts['path'] : '/';
+		$base_directory = $this->get_url_path_directory( $base_path );
+		$segments       = explode( '/', trim( $base_directory . $relative_url, '/' ) );
+		$resolved       = array();
+
+		foreach ( $segments as $segment ) {
+			if ( '' === $segment || '.' === $segment ) {
+				continue;
+			}
+
+			if ( '..' === $segment ) {
+				array_pop( $resolved );
+				continue;
+			}
+
+			$resolved[] = $segment;
+		}
+
+		return $base_root . '/' . implode( '/', $resolved ) . $query . $fragment;
+	}
+
+	/**
+	 * Get the directory portion of a URL path.
+	 *
+	 * @param string $path URL path.
+	 * @return string
+	 */
+	private function get_url_path_directory( $path ) {
+		$path = '' === $path ? '/' : $path;
+
+		if ( '/' === substr( $path, -1 ) ) {
+			return $path;
+		}
+
+		return trailingslashit( dirname( $path ) );
 	}
 
 	/**

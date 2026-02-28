@@ -3,11 +3,12 @@ Contributors: anolaru
 Tags: broken images, 404, seo, media, maintenance
 Requires at least: 5.0
 Tested up to: 6.9
-Stable tag: 1.2.0
+Requires PHP: 7.4
+Stable tag: 1.2.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Scan your WordPress site for broken images in post content and featured images.
+Scan your WordPress site for broken images in post content and featured images directly from the admin dashboard.
 
 == Description ==
 
@@ -19,7 +20,7 @@ Missing or broken images can negatively affect user experience and SEO. This plu
 * Broken image URLs inside post content
 * Broken featured images on posts and pages
 
-No external services, no tracking, no bloat — everything runs locally on your server using WordPress core functions.
+No external services, no tracking, no bloat - everything runs locally on your server using WordPress core functions.
 
 == Features ==
 
@@ -33,7 +34,7 @@ No external services, no tracking, no bloat — everything runs locally on your 
 
 == Installation ==
 
-1. Upload the plugin ZIP via *Plugins → Add New → Upload Plugin*.
+1. Upload the plugin ZIP via *Plugins -> Add New -> Upload Plugin*.
 2. Activate **Kreativ Broken Image Finder**.
 3. Go to **Kreativ Broken Image Finder** in the WordPress admin menu.
 4. Click **Run Full Scan** and wait for the results.
@@ -46,7 +47,7 @@ No. The plugin only detects and reports broken images. You can then edit the aff
 
 = How does the plugin detect broken images? =
 
-It scans `<img>` tags in post content and checks their `src` URLs using HTTP `HEAD` requests. It also checks featured image URLs.
+It scans `<img>` tags in post content and checks their `src` URLs using WordPress HTTP requests, with fallback handling for servers that do not respond properly to `HEAD`. It also checks featured image URLs.
 
 = Does it use any external services or APIs? =
 
@@ -60,7 +61,22 @@ The scan runs only when manually triggered from the admin dashboard and does not
 
 1. Admin page showing the scan summary and broken images report.
 
+== Upgrade Notice ==
+
+= 1.2.2 =
+Improved scan accuracy for more image hosts, better handling of relative paths, and more reliable batching on larger sites.
+
 == Changelog ==
+
+= 1.2.2 =
+* Added GET fallback when image hosts reject HEAD requests, reducing false positives.
+* Improved support for document-relative image paths in post content.
+* Reworked scan batching to avoid loading all published post IDs into a single option during scan startup.
+
+= 1.2.1 =
+* Updated WordPress.org readme metadata and release notes.
+* Synced plugin asset versioning with the current plugin version.
+* Added WordPress.org-standard banner and icon asset variants.
 
 = 1.2.0 =
 * Added top-level admin menu for easier access.
