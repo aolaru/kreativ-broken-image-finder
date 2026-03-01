@@ -3,7 +3,7 @@
  * Plugin Name:       Kreativ Broken Image Finder
  * Plugin URI:        https://kreativfont.com/tools/kreativ-broken-image-finder-wp-plugin
  * Description:       Scan your site for broken images in posts, pages and custom post types, and get a simple report inside your dashboard.
- * Version:           1.2.2
+ * Version:           1.2.3
  * Author:            Andrei Olaru
  * Author URI:        https://kreativfont.com/
  * Text Domain:       kreativ-broken-image-finder
@@ -21,11 +21,27 @@ if ( ! class_exists( 'Kreativ_Broken_Image_Finder' ) ) :
 
 class Kreativ_Broken_Image_Finder {
 
-	const VERSION         = '1.2.2';
+	const VERSION         = '1.2.3';
 	const OPTION_RESULTS  = 'kbif_last_scan_results';
 	const OPTION_STATS    = 'kbif_last_scan_stats';
 	const OPTION_QUEUE    = 'kbif_scan_queue';
 	const OPTION_PROGRESS = 'kbif_scan_progress';
+	const OPTION_SETTINGS = 'kbif_settings';
+	const OPTION_URL_CACHE = 'kbif_scan_url_cache';
+
+	/**
+	 * Per-request cache of URL checks for the active scan.
+	 *
+	 * @var array|null
+	 */
+	private $url_check_cache = null;
+
+	/**
+	 * Whether the in-memory cache needs to be flushed back to storage.
+	 *
+	 * @var bool
+	 */
+	private $url_check_cache_dirty = false;
 
 	/**
 	 * Constructor.
@@ -33,6 +49,7 @@ class Kreativ_Broken_Image_Finder {
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+		add_action( 'admin_post_kbif_save_settings', array( $this, 'handle_save_settings' ) );
 		add_action( 'wp_ajax_kbif_scan_step', array( $this, 'ajax_scan_step' ) );
 	}
 
@@ -90,6 +107,43 @@ class Kreativ_Broken_Image_Finder {
 	}
 
 	/**
+	 * Save plugin settings from the admin screen.
+	 */
+	public function handle_save_settings() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You are not allowed to manage these settings.', 'kreativ-broken-image-finder' ) );
+		}
+
+		check_admin_referer( 'kbif_save_settings', 'kbif_settings_nonce' );
+
+		$mode = isset( $_POST['kbif_missing_featured_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['kbif_missing_featured_mode'] ) ) : 'all';
+		$mode = in_array( $mode, array( 'all', 'none', 'selected' ), true ) ? $mode : 'all';
+
+		$post_types = isset( $_POST['kbif_missing_featured_post_types'] ) ? (array) wp_unslash( $_POST['kbif_missing_featured_post_types'] ) : array();
+		$post_types = array_map( 'sanitize_key', $post_types );
+		$post_types = array_values( array_intersect( $post_types, $this->get_scannable_post_types() ) );
+
+		update_option(
+			self::OPTION_SETTINGS,
+			array(
+				'missing_featured_mode'       => $mode,
+				'missing_featured_post_types' => $post_types,
+			)
+		);
+
+		$redirect_url = add_query_arg(
+			array(
+				'page'                  => 'kreativ-broken-image-finder',
+				'kbif_settings_updated' => '1',
+			),
+			admin_url( 'admin.php' )
+		);
+
+		wp_safe_redirect( $redirect_url );
+		exit;
+	}
+
+	/**
 	 * AJAX handler for multi-step scan.
 	 */
 	public function ajax_scan_step() {
@@ -102,32 +156,7 @@ class Kreativ_Broken_Image_Finder {
 		$step = isset( $_POST['step'] ) ? sanitize_text_field( wp_unslash( $_POST['step'] ) ) : '';
 
 		if ( 'init' === $step ) {
-			$total = $this->count_scannable_posts();
-
-			delete_option( self::OPTION_QUEUE );
-
-			$stats = array(
-				'total_posts'             => $total,
-				'total_images_found'      => 0,
-				'broken_images'           => 0,
-				'missing_featured_images' => 0,
-				'scan_time'               => 0,
-			);
-			update_option( self::OPTION_STATS, $stats );
-
-			update_option(
-				self::OPTION_RESULTS,
-				array()
-			);
-
-			update_option(
-				self::OPTION_PROGRESS,
-				array(
-					'processed_posts' => 0,
-					'batch_size'      => 5,
-					'started_at'      => microtime( true ),
-				)
-			);
+			$total = $this->reset_scan_state( 5 );
 
 			wp_send_json_success(
 				array(
@@ -137,8 +166,9 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		if ( 'process' === $step ) {
-			$stats = get_option( self::OPTION_STATS, array() );
-			$total = isset( $stats['total_posts'] ) ? intval( $stats['total_posts'] ) : 0;
+			$progress = get_option( self::OPTION_PROGRESS, array() );
+			$stats    = get_option( self::OPTION_STATS, array() );
+			$total    = isset( $stats['total_posts'] ) ? intval( $stats['total_posts'] ) : 0;
 
 			if ( 0 === $total ) {
 				wp_send_json_success(
@@ -150,7 +180,6 @@ class Kreativ_Broken_Image_Finder {
 				);
 			}
 
-			$progress   = get_option( self::OPTION_PROGRESS, array() );
 			$pointer    = isset( $_POST['pointer'] ) ? max( 0, intval( $_POST['pointer'] ) ) : 0;
 			$batch_size = isset( $progress['batch_size'] ) ? max( 1, intval( $progress['batch_size'] ) ) : 5;
 
@@ -164,56 +193,7 @@ class Kreativ_Broken_Image_Finder {
 				);
 			}
 
-			$posts        = $this->get_scan_batch_posts( $pointer, $batch_size );
-			$batch_items  = array();
-			$delta_images = 0;
-			$delta_broken = 0;
-			$delta_missing = 0;
-
-			if ( empty( $posts ) ) {
-				wp_send_json_success(
-					array(
-						'finished' => true,
-						'total'    => $total,
-						'pointer'  => $total,
-					)
-				);
-			}
-
-			foreach ( $posts as $post_id ) {
-				$scan_data = $this->scan_single_post( $post_id );
-
-				$batch_items  = array_merge( $batch_items, $scan_data['items'] );
-				$delta_images += $scan_data['images_found'];
-				$delta_broken += $scan_data['broken_images'];
-				$delta_missing += $scan_data['missing_featured_images'];
-			}
-
-			$pointer += count( $posts );
-
-			// Append results.
-			$existing_results = get_option( self::OPTION_RESULTS, array() );
-			$existing_results = array_merge( $existing_results, $batch_items );
-			update_option( self::OPTION_RESULTS, $existing_results );
-
-			// Update stats.
-			if ( empty( $stats ) ) {
-				$stats = array(
-					'total_posts'             => $total,
-					'total_images_found'      => 0,
-					'broken_images'           => 0,
-					'missing_featured_images' => 0,
-					'scan_time'               => 0,
-				);
-			}
-			$stats['total_images_found']      += $delta_images;
-			$stats['broken_images']           += $delta_broken;
-			$stats['missing_featured_images'] += $delta_missing;
-			update_option( self::OPTION_STATS, $stats );
-
-			// Update progress.
-			$progress['processed_posts']  = $pointer;
-			update_option( self::OPTION_PROGRESS, $progress );
+			$pointer = $this->process_scan_batch( $pointer, $batch_size, $total, $progress, $stats );
 
 			$finished = ( $pointer >= $total );
 
@@ -227,16 +207,7 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		if ( 'finish' === $step ) {
-			$stats    = get_option( self::OPTION_STATS, array() );
-			$progress = get_option( self::OPTION_PROGRESS, array() );
-
-			if ( isset( $progress['started_at'] ) ) {
-				$stats['scan_time'] = round( microtime( true ) - $progress['started_at'], 2 );
-				update_option( self::OPTION_STATS, $stats );
-			}
-
-			delete_option( self::OPTION_QUEUE );
-			delete_option( self::OPTION_PROGRESS );
+			$this->finalize_scan_state();
 
 			wp_send_json_success();
 		}
@@ -321,7 +292,7 @@ class Kreativ_Broken_Image_Finder {
 					);
 				}
 			}
-		} else {
+		} elseif ( $this->should_report_missing_featured_image( $post_type ) ) {
 			$missing_featured_images++;
 
 			$items[] = array(
@@ -393,6 +364,12 @@ class Kreativ_Broken_Image_Finder {
 			return $result;
 		}
 
+		$cache = $this->get_url_check_cache();
+
+		if ( isset( $cache[ $url ] ) && is_array( $cache[ $url ] ) ) {
+			return $cache[ $url ];
+		}
+
 		$response = wp_remote_head( $url, $this->get_request_args() );
 
 		if ( $this->should_retry_with_get( $response ) ) {
@@ -403,6 +380,7 @@ class Kreativ_Broken_Image_Finder {
 			$result['is_broken']     = true;
 			$result['status_code']   = 0;
 			$result['error_message'] = $response->get_error_message();
+			$this->remember_url_check( $url, $result );
 			return $result;
 		}
 
@@ -418,7 +396,234 @@ class Kreativ_Broken_Image_Finder {
 			);
 		}
 
+		$this->remember_url_check( $url, $result );
+
 		return $result;
+	}
+
+	/**
+	 * Reset saved state for a new scan.
+	 *
+	 * @param int $batch_size Batch size.
+	 * @return int
+	 */
+	private function reset_scan_state( $batch_size ) {
+		$total = $this->count_scannable_posts();
+
+		delete_option( self::OPTION_QUEUE );
+		delete_option( self::OPTION_URL_CACHE );
+
+		update_option(
+			self::OPTION_STATS,
+			array(
+				'total_posts'             => $total,
+				'total_images_found'      => 0,
+				'broken_images'           => 0,
+				'missing_featured_images' => 0,
+				'scan_time'               => 0,
+			)
+		);
+
+		update_option( self::OPTION_RESULTS, array() );
+		update_option(
+			self::OPTION_PROGRESS,
+			array(
+				'processed_posts' => 0,
+				'batch_size'      => max( 1, (int) $batch_size ),
+				'started_at'      => microtime( true ),
+			)
+		);
+
+		$this->url_check_cache       = array();
+		$this->url_check_cache_dirty = false;
+
+		return $total;
+	}
+
+	/**
+	 * Finalize a scan and clear temporary state.
+	 */
+	private function finalize_scan_state() {
+		$stats    = get_option( self::OPTION_STATS, array() );
+		$progress = get_option( self::OPTION_PROGRESS, array() );
+
+		if ( isset( $progress['started_at'] ) ) {
+			$stats['scan_time'] = round( microtime( true ) - $progress['started_at'], 2 );
+			update_option( self::OPTION_STATS, $stats );
+		}
+
+		$this->flush_url_check_cache();
+
+		delete_option( self::OPTION_QUEUE );
+		delete_option( self::OPTION_PROGRESS );
+		delete_option( self::OPTION_URL_CACHE );
+	}
+
+	/**
+	 * Process one scan batch and persist progress.
+	 *
+	 * @param int   $pointer Current pointer.
+	 * @param int   $batch_size Batch size.
+	 * @param int   $total Total posts in scan.
+	 * @param array $progress Progress payload.
+	 * @param array $stats Scan stats payload.
+	 * @return int
+	 */
+	private function process_scan_batch( $pointer, $batch_size, $total, $progress, $stats ) {
+		$posts         = $this->get_scan_batch_posts( $pointer, $batch_size );
+		$batch_items   = array();
+		$delta_images  = 0;
+		$delta_broken  = 0;
+		$delta_missing = 0;
+
+		$this->get_url_check_cache();
+
+		if ( empty( $posts ) ) {
+			return $total;
+		}
+
+		foreach ( $posts as $post_id ) {
+			$scan_data = $this->scan_single_post( $post_id );
+
+			$batch_items   = array_merge( $batch_items, $scan_data['items'] );
+			$delta_images  += $scan_data['images_found'];
+			$delta_broken  += $scan_data['broken_images'];
+			$delta_missing += $scan_data['missing_featured_images'];
+		}
+
+		$pointer += count( $posts );
+
+		$existing_results = get_option( self::OPTION_RESULTS, array() );
+		update_option( self::OPTION_RESULTS, array_merge( $existing_results, $batch_items ) );
+
+		if ( empty( $stats ) ) {
+			$stats = array(
+				'total_posts'             => $total,
+				'total_images_found'      => 0,
+				'broken_images'           => 0,
+				'missing_featured_images' => 0,
+				'scan_time'               => 0,
+			);
+		}
+
+		$stats['total_images_found']      += $delta_images;
+		$stats['broken_images']           += $delta_broken;
+		$stats['missing_featured_images'] += $delta_missing;
+		update_option( self::OPTION_STATS, $stats );
+
+		$progress['processed_posts'] = $pointer;
+		update_option( self::OPTION_PROGRESS, $progress );
+
+		$this->flush_url_check_cache();
+
+		return $pointer;
+	}
+
+	/**
+	 * Get plugin settings with defaults applied.
+	 *
+	 * @return array
+	 */
+	private function get_settings() {
+		$defaults = array(
+			'missing_featured_mode'       => 'all',
+			'missing_featured_post_types' => array(),
+		);
+
+		$settings = get_option( self::OPTION_SETTINGS, array() );
+		$settings = wp_parse_args( $settings, $defaults );
+		$settings['missing_featured_mode'] = in_array( $settings['missing_featured_mode'], array( 'all', 'none', 'selected' ), true ) ? $settings['missing_featured_mode'] : 'all';
+		$settings['missing_featured_post_types'] = array_values(
+			array_intersect(
+				array_map( 'sanitize_key', (array) $settings['missing_featured_post_types'] ),
+				$this->get_scannable_post_types()
+			)
+		);
+
+		return $settings;
+	}
+
+	/**
+	 * Determine whether a post type should be flagged for missing featured images.
+	 *
+	 * @param string $post_type Post type name.
+	 * @return bool
+	 */
+	private function should_report_missing_featured_image( $post_type ) {
+		$settings = $this->get_settings();
+
+		if ( 'none' === $settings['missing_featured_mode'] ) {
+			return false;
+		}
+
+		if ( 'selected' === $settings['missing_featured_mode'] ) {
+			return in_array( $post_type, $settings['missing_featured_post_types'], true );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Load the per-scan URL cache.
+	 *
+	 * @return array
+	 */
+	private function get_url_check_cache() {
+		if ( null === $this->url_check_cache ) {
+			$cache = get_option( self::OPTION_URL_CACHE, array() );
+			$this->url_check_cache = is_array( $cache ) ? $cache : array();
+		}
+
+		return $this->url_check_cache;
+	}
+
+	/**
+	 * Remember the check result for a URL in the active scan cache.
+	 *
+	 * @param string $url URL cache key.
+	 * @param array  $result Scan result.
+	 */
+	private function remember_url_check( $url, $result ) {
+		$this->get_url_check_cache();
+		$this->url_check_cache[ $url ] = $result;
+		$this->url_check_cache_dirty    = true;
+	}
+
+	/**
+	 * Persist the in-memory URL cache.
+	 */
+	private function flush_url_check_cache() {
+		if ( ! $this->url_check_cache_dirty || null === $this->url_check_cache ) {
+			return;
+		}
+
+		update_option( self::OPTION_URL_CACHE, $this->url_check_cache, false );
+		$this->url_check_cache_dirty = false;
+	}
+
+	/**
+	 * Run a full scan for WP-CLI.
+	 *
+	 * @param array $assoc_args Command arguments.
+	 * @return array
+	 */
+	public function run_cli_scan( $assoc_args = array() ) {
+		$batch_size = isset( $assoc_args['batch-size'] ) ? max( 1, (int) $assoc_args['batch-size'] ) : 20;
+		$total      = $this->reset_scan_state( $batch_size );
+		$pointer    = 0;
+
+		while ( $pointer < $total ) {
+			$progress = get_option( self::OPTION_PROGRESS, array() );
+			$stats    = get_option( self::OPTION_STATS, array() );
+			$pointer  = $this->process_scan_batch( $pointer, $batch_size, $total, $progress, $stats );
+		}
+
+		$this->finalize_scan_state();
+
+		return array(
+			'stats'   => get_option( self::OPTION_STATS, array() ),
+			'results' => get_option( self::OPTION_RESULTS, array() ),
+		);
 	}
 
 	/**
@@ -624,6 +829,7 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		$results = get_option( self::OPTION_RESULTS, array() );
+		$settings = $this->get_settings();
 		$stats   = get_option(
 			self::OPTION_STATS,
 			array(
@@ -636,6 +842,8 @@ class Kreativ_Broken_Image_Finder {
 		);
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$scanned = isset( $_GET['kbif_scanned'] ) && '1' === $_GET['kbif_scanned'];
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$settings_updated = isset( $_GET['kbif_settings_updated'] ) && '1' === $_GET['kbif_settings_updated'];
 
 		// Filters.
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -701,6 +909,12 @@ class Kreativ_Broken_Image_Finder {
 				</div>
 			<?php endif; ?>
 
+			<?php if ( $settings_updated ) : ?>
+				<div class="notice notice-success is-dismissible">
+					<p><?php esc_html_e( 'Settings saved.', 'kreativ-broken-image-finder' ); ?></p>
+				</div>
+			<?php endif; ?>
+
 			<p>
 				<button id="kbif-start-scan" class="button button-primary">
 					<?php esc_html_e( 'Run Full Scan', 'kreativ-broken-image-finder' ); ?>
@@ -713,6 +927,56 @@ class Kreativ_Broken_Image_Finder {
 				</div>
 				<div id="kbif-progress-text">Starting...</div>
 			</div>
+
+			<h2 style="margin-top:2em;"><?php esc_html_e( 'Scan Settings', 'kreativ-broken-image-finder' ); ?></h2>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="max-width:700px;">
+				<input type="hidden" name="action" value="kbif_save_settings">
+				<?php wp_nonce_field( 'kbif_save_settings', 'kbif_settings_nonce' ); ?>
+
+				<table class="form-table" role="presentation">
+					<tbody>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Missing featured image rule', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<fieldset>
+									<label>
+										<input type="radio" name="kbif_missing_featured_mode" value="all" <?php checked( $settings['missing_featured_mode'], 'all' ); ?>>
+										<?php esc_html_e( 'Report missing featured images for all scanned post types', 'kreativ-broken-image-finder' ); ?>
+									</label>
+									<br>
+									<label>
+										<input type="radio" name="kbif_missing_featured_mode" value="none" <?php checked( $settings['missing_featured_mode'], 'none' ); ?>>
+										<?php esc_html_e( 'Do not report missing featured images', 'kreativ-broken-image-finder' ); ?>
+									</label>
+									<br>
+									<label>
+										<input type="radio" name="kbif_missing_featured_mode" value="selected" <?php checked( $settings['missing_featured_mode'], 'selected' ); ?>>
+										<?php esc_html_e( 'Report missing featured images only for selected post types', 'kreativ-broken-image-finder' ); ?>
+									</label>
+								</fieldset>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Post types for missing featured image reporting', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<fieldset>
+									<?php foreach ( $this->get_scannable_post_types() as $post_type_name ) : ?>
+										<label style="display:inline-block;min-width:160px;margin:0 12px 8px 0;">
+											<input type="checkbox" name="kbif_missing_featured_post_types[]" value="<?php echo esc_attr( $post_type_name ); ?>" <?php checked( in_array( $post_type_name, $settings['missing_featured_post_types'], true ) ); ?>>
+											<?php echo esc_html( $post_type_name ); ?>
+										</label>
+									<?php endforeach; ?>
+								</fieldset>
+								<p class="description"><?php esc_html_e( 'These selections apply only when "selected post types" is chosen above.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+
+				<p>
+					<input type="submit" class="button" value="<?php esc_attr_e( 'Save Settings', 'kreativ-broken-image-finder' ); ?>">
+				</p>
+			</form>
 
 			<h2 style="margin-top:2em;"><?php esc_html_e( 'Last Scan Summary', 'kreativ-broken-image-finder' ); ?></h2>
 			<table class="widefat striped" style="max-width: 700px;">
@@ -887,4 +1151,68 @@ class Kreativ_Broken_Image_Finder {
 
 endif;
 
-new Kreativ_Broken_Image_Finder();
+$kreativ_broken_image_finder = new Kreativ_Broken_Image_Finder();
+
+if ( defined( 'WP_CLI' ) && WP_CLI && ! class_exists( 'Kreativ_Broken_Image_Finder_CLI_Command' ) ) {
+	/**
+	 * WP-CLI commands for Kreativ Broken Image Finder.
+	 */
+	class Kreativ_Broken_Image_Finder_CLI_Command {
+
+		/**
+		 * Plugin instance.
+		 *
+		 * @var Kreativ_Broken_Image_Finder
+		 */
+		private $plugin;
+
+		/**
+		 * Constructor.
+		 *
+		 * @param Kreativ_Broken_Image_Finder $plugin Plugin instance.
+		 */
+		public function __construct( $plugin ) {
+			$this->plugin = $plugin;
+		}
+
+		/**
+		 * Run a full scan.
+		 *
+		 * ## OPTIONS
+		 *
+		 * [--batch-size=<number>]
+		 * : Number of posts to scan per batch. Default: 20.
+		 *
+		 * ## EXAMPLES
+		 *
+		 *     wp kbif scan
+		 *     wp kbif scan --batch-size=10
+		 *
+		 * @param array $args Positional args.
+		 * @param array $assoc_args Associative args.
+		 */
+		public function scan( $args, $assoc_args ) {
+			$result  = $this->plugin->run_cli_scan( $assoc_args );
+			$stats   = isset( $result['stats'] ) ? $result['stats'] : array();
+			$results = isset( $result['results'] ) ? $result['results'] : array();
+
+			\WP_CLI::log( 'Scan complete.' );
+			\WP_CLI\Utils\format_items(
+				'table',
+				array(
+					array(
+						'total_posts'             => isset( $stats['total_posts'] ) ? (int) $stats['total_posts'] : 0,
+						'total_images_found'      => isset( $stats['total_images_found'] ) ? (int) $stats['total_images_found'] : 0,
+						'broken_images'           => isset( $stats['broken_images'] ) ? (int) $stats['broken_images'] : 0,
+						'missing_featured_images' => isset( $stats['missing_featured_images'] ) ? (int) $stats['missing_featured_images'] : 0,
+						'scan_time'               => isset( $stats['scan_time'] ) ? $stats['scan_time'] : 0,
+						'reported_items'          => count( $results ),
+					),
+				),
+				array( 'total_posts', 'total_images_found', 'broken_images', 'missing_featured_images', 'scan_time', 'reported_items' )
+			);
+		}
+	}
+
+	\WP_CLI::add_command( 'kbif', new Kreativ_Broken_Image_Finder_CLI_Command( $kreativ_broken_image_finder ) );
+}

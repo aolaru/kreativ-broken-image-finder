@@ -4,7 +4,7 @@ Tags: broken images, 404, seo, media, maintenance
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.2.2
+Stable tag: 1.2.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -27,6 +27,9 @@ No external services, no tracking, no bloat - everything runs locally on your se
 * Scan all public post types (posts, pages, custom post types)
 * Detect broken images inside post content
 * Detect broken featured images
+* Cache repeated image URL checks during a scan for faster results
+* Optional missing featured image reporting by post type
+* WP-CLI support with `wp kbif scan`
 * Summary with posts scanned, images checked, broken images found and scan time
 * Detailed report with direct links to edit affected posts
 * Supports relative and protocol-relative image URLs
@@ -37,7 +40,8 @@ No external services, no tracking, no bloat - everything runs locally on your se
 1. Upload the plugin ZIP via *Plugins -> Add New -> Upload Plugin*.
 2. Activate **Kreativ Broken Image Finder**.
 3. Go to **Kreativ Broken Image Finder** in the WordPress admin menu.
-4. Click **Run Full Scan** and wait for the results.
+4. Optionally configure the missing featured image rule for your post types.
+5. Click **Run Full Scan** and wait for the results.
 
 == Frequently Asked Questions ==
 
@@ -48,6 +52,14 @@ No. The plugin only detects and reports broken images. You can then edit the aff
 = How does the plugin detect broken images? =
 
 It scans `<img>` tags in post content and checks their `src` URLs using WordPress HTTP requests, with fallback handling for servers that do not respond properly to `HEAD`. It also checks featured image URLs.
+
+= Can I control missing featured image reporting? =
+
+Yes. You can choose whether missing featured images are reported for all post types, no post types, or only selected post types from the plugin settings screen.
+
+= Does it support WP-CLI? =
+
+Yes. You can run a full scan from the command line with `wp kbif scan`. You can also control the batch size with `wp kbif scan --batch-size=10`.
 
 = Does it use any external services or APIs? =
 
@@ -63,10 +75,15 @@ The scan runs only when manually triggered from the admin dashboard and does not
 
 == Upgrade Notice ==
 
-= 1.2.2 =
-Improved scan accuracy for more image hosts, better handling of relative paths, and more reliable batching on larger sites.
+= 1.2.3 =
+Adds configurable missing featured image rules, scan-time URL caching, and a new WP-CLI scan command.
 
 == Changelog ==
+
+= 1.2.3 =
+* Added per-scan URL caching to avoid repeating the same remote image checks across posts.
+* Added admin settings to control missing featured image reporting by post type.
+* Added a `wp kbif scan` command with configurable batch size.
 
 = 1.2.2 =
 * Added GET fallback when image hosts reject HEAD requests, reducing false positives.
