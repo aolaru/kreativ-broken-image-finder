@@ -3,7 +3,7 @@
  * Plugin Name:       Kreativ Broken Image Finder
  * Plugin URI:        https://kreativfont.com/tools/kreativ-broken-image-finder-wp-plugin
  * Description:       Scan your site for broken images in posts, pages and custom post types, and get a simple report inside your dashboard.
- * Version:           1.2.3
+ * Version:           1.3.0
  * Author:            Andrei Olaru
  * Author URI:        https://kreativfont.com/
  * Text Domain:       kreativ-broken-image-finder
@@ -21,7 +21,7 @@ if ( ! class_exists( 'Kreativ_Broken_Image_Finder' ) ) :
 
 class Kreativ_Broken_Image_Finder {
 
-	const VERSION         = '1.2.3';
+	const VERSION         = '1.3.0';
 	const OPTION_RESULTS  = 'kbif_last_scan_results';
 	const OPTION_STATS    = 'kbif_last_scan_stats';
 	const OPTION_QUEUE    = 'kbif_scan_queue';
@@ -50,6 +50,9 @@ class Kreativ_Broken_Image_Finder {
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 		add_action( 'admin_post_kbif_save_settings', array( $this, 'handle_save_settings' ) );
+		add_action( 'admin_post_kbif_export_csv', array( $this, 'handle_export_csv' ) );
+		add_action( 'admin_post_kbif_recheck_post', array( $this, 'handle_recheck_post' ) );
+		add_action( 'admin_post_kbif_ignore_result', array( $this, 'handle_ignore_result' ) );
 		add_action( 'wp_ajax_kbif_scan_step', array( $this, 'ajax_scan_step' ) );
 	}
 
@@ -123,11 +126,18 @@ class Kreativ_Broken_Image_Finder {
 		$post_types = array_map( 'sanitize_key', $post_types );
 		$post_types = array_values( array_intersect( $post_types, $this->get_scannable_post_types() ) );
 
+		$ignored_urls    = $this->sanitize_textarea_list( isset( $_POST['kbif_ignored_urls'] ) ? wp_unslash( $_POST['kbif_ignored_urls'] ) : '' );
+		$ignored_domains = $this->sanitize_domain_list( isset( $_POST['kbif_ignored_domains'] ) ? wp_unslash( $_POST['kbif_ignored_domains'] ) : '' );
+		$ignored_posts   = $this->sanitize_id_list( isset( $_POST['kbif_ignored_post_ids'] ) ? wp_unslash( $_POST['kbif_ignored_post_ids'] ) : '' );
+
 		update_option(
 			self::OPTION_SETTINGS,
 			array(
 				'missing_featured_mode'       => $mode,
 				'missing_featured_post_types' => $post_types,
+				'ignored_urls'                => $ignored_urls,
+				'ignored_domains'             => $ignored_domains,
+				'ignored_post_ids'            => $ignored_posts,
 			)
 		);
 
@@ -141,6 +151,152 @@ class Kreativ_Broken_Image_Finder {
 
 		wp_safe_redirect( $redirect_url );
 		exit;
+	}
+
+	/**
+	 * Export the current filtered report as CSV.
+	 */
+	public function handle_export_csv() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You are not allowed to export these results.', 'kreativ-broken-image-finder' ) );
+		}
+
+		check_admin_referer( 'kbif_export_csv', 'kbif_export_nonce' );
+
+		$results = $this->get_filtered_results_from_request();
+		$filename = 'kreativ-broken-image-finder-' . gmdate( 'Y-m-d-His' ) . '.csv';
+
+		nocache_headers();
+		header( 'Content-Type: text/csv; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename=' . $filename );
+
+		$output = fopen( 'php://output', 'w' );
+
+		fputcsv(
+			$output,
+			array(
+				'Post ID',
+				'Post Title',
+				'Post Type',
+				'Edit URL',
+				'Source',
+				'Image URL',
+				'Status Code',
+				'Error',
+			)
+		);
+
+		foreach ( $results as $row ) {
+			fputcsv(
+				$output,
+				array(
+					isset( $row['post_id'] ) ? (int) $row['post_id'] : 0,
+					isset( $row['post_title'] ) ? $row['post_title'] : '',
+					isset( $row['post_type'] ) ? $row['post_type'] : '',
+					! empty( $row['post_id'] ) ? get_edit_post_link( (int) $row['post_id'], 'raw' ) : '',
+					isset( $row['source'] ) ? $row['source'] : '',
+					isset( $row['image_url'] ) ? $row['image_url'] : '',
+					isset( $row['status_code'] ) ? $row['status_code'] : '',
+					isset( $row['error'] ) ? $row['error'] : '',
+				)
+			);
+		}
+
+		fclose( $output );
+		exit;
+	}
+
+	/**
+	 * Recheck one post or media attachment and replace its saved results.
+	 */
+	public function handle_recheck_post() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You are not allowed to recheck these results.', 'kreativ-broken-image-finder' ) );
+		}
+
+		$post_id = isset( $_POST['post_id'] ) ? absint( $_POST['post_id'] ) : 0;
+		check_admin_referer( 'kbif_recheck_post_' . $post_id, 'kbif_recheck_nonce' );
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			$this->redirect_to_admin_page( array( 'kbif_rechecked' => '0' ) );
+		}
+
+		$results = get_option( self::OPTION_RESULTS, array() );
+		$results = array_values(
+			array_filter(
+				$results,
+				function( $row ) use ( $post_id ) {
+					return empty( $row['post_id'] ) || (int) $row['post_id'] !== $post_id;
+				}
+			)
+		);
+
+		$scan_data = ( 'attachment' === $post->post_type ) ? $this->scan_media_attachment( $post_id ) : $this->scan_single_post( $post_id );
+		$results   = array_merge( $results, $scan_data['items'] );
+
+		update_option( self::OPTION_RESULTS, $results );
+		$this->sync_result_counts_to_stats( $results );
+
+		$this->redirect_to_admin_page( array( 'kbif_rechecked' => '1' ) );
+	}
+
+	/**
+	 * Add a URL, domain, or post to the ignore list and remove matching saved results.
+	 */
+	public function handle_ignore_result() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You are not allowed to ignore these results.', 'kreativ-broken-image-finder' ) );
+		}
+
+		check_admin_referer( 'kbif_ignore_result', 'kbif_ignore_nonce' );
+
+		$type     = isset( $_POST['ignore_type'] ) ? sanitize_key( wp_unslash( $_POST['ignore_type'] ) ) : '';
+		$value    = isset( $_POST['ignore_value'] ) ? sanitize_text_field( wp_unslash( $_POST['ignore_value'] ) ) : '';
+		$settings = $this->get_settings();
+
+		if ( 'url' === $type && '' !== $value ) {
+			$settings['ignored_urls'][] = esc_url_raw( $value );
+			$settings['ignored_urls']   = array_values( array_unique( array_filter( $settings['ignored_urls'] ) ) );
+		}
+
+		if ( 'domain' === $type && '' !== $value ) {
+			$domain = $this->normalize_domain( $value );
+
+			if ( '' !== $domain ) {
+				$settings['ignored_domains'][] = $domain;
+				$settings['ignored_domains']   = array_values( array_unique( array_filter( $settings['ignored_domains'] ) ) );
+			}
+		}
+
+		if ( 'post' === $type ) {
+			$post_id = absint( $value );
+
+			if ( $post_id > 0 ) {
+				$settings['ignored_post_ids'][] = $post_id;
+				$settings['ignored_post_ids']   = array_values( array_unique( array_map( 'absint', $settings['ignored_post_ids'] ) ) );
+			}
+		}
+
+		update_option( self::OPTION_SETTINGS, $settings );
+
+		$results = get_option( self::OPTION_RESULTS, array() );
+		$results = array_values(
+			array_filter(
+				$results,
+				function( $row ) {
+					$post_id = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
+					$url     = isset( $row['image_url'] ) ? $row['image_url'] : '';
+
+					return ! $this->is_result_ignored( $post_id, $url );
+				}
+			)
+		);
+
+		update_option( self::OPTION_RESULTS, $results );
+		$this->sync_result_counts_to_stats( $results );
+
+		$this->redirect_to_admin_page( array( 'kbif_ignored' => '1' ) );
 	}
 
 	/**
@@ -230,6 +386,7 @@ class Kreativ_Broken_Image_Finder {
 				'images_found'             => 0,
 				'broken_images'            => 0,
 				'missing_featured_images'  => 0,
+				'missing_attachment_files' => 0,
 			);
 		}
 
@@ -241,12 +398,27 @@ class Kreativ_Broken_Image_Finder {
 		$images_found            = 0;
 		$broken_images           = 0;
 		$missing_featured_images = 0;
+		$missing_attachment_files = 0;
+
+		if ( $this->is_result_ignored( $post_id, '' ) ) {
+			return array(
+				'items'                    => $items,
+				'images_found'             => $images_found,
+				'broken_images'            => $broken_images,
+				'missing_featured_images'  => $missing_featured_images,
+				'missing_attachment_files' => $missing_attachment_files,
+			);
+		}
 
 		// Content images.
 		$content        = $post->post_content;
 		$content_images = $this->find_images_in_content( $content );
 
 		foreach ( $content_images as $image_url ) {
+			if ( $this->is_result_ignored( $post_id, $image_url ) ) {
+				continue;
+			}
+
 			$images_found++;
 
 			usleep( 150000 );
@@ -274,25 +446,27 @@ class Kreativ_Broken_Image_Finder {
 			$image_url = wp_get_attachment_image_url( $thumb_id, 'full' );
 
 			if ( $image_url ) {
-				$images_found++;
+				if ( ! $this->is_result_ignored( $post_id, $image_url ) ) {
+					$images_found++;
 
-				$check = $this->check_image_url( $image_url, $post_url );
+					$check = $this->check_image_url( $image_url, $post_url );
 
-				if ( $check['is_broken'] ) {
-					$broken_images++;
+					if ( $check['is_broken'] ) {
+						$broken_images++;
 
-					$items[] = array(
-						'post_id'     => $post_id,
-						'post_title'  => $post_title,
-						'post_type'   => $post_type,
-						'image_url'   => $image_url,
-						'source'      => 'featured',
-						'status_code' => $check['status_code'],
-						'error'       => $check['error_message'],
-					);
+						$items[] = array(
+							'post_id'     => $post_id,
+							'post_title'  => $post_title,
+							'post_type'   => $post_type,
+							'image_url'   => $image_url,
+							'source'      => 'featured',
+							'status_code' => $check['status_code'],
+							'error'       => $check['error_message'],
+						);
+					}
 				}
 			}
-		} elseif ( $this->should_report_missing_featured_image( $post_type ) ) {
+		} elseif ( $this->should_report_missing_featured_image( $post_type ) && ! $this->is_result_ignored( $post_id, '' ) ) {
 			$missing_featured_images++;
 
 			$items[] = array(
@@ -311,6 +485,108 @@ class Kreativ_Broken_Image_Finder {
 			'images_found'            => $images_found,
 			'broken_images'           => $broken_images,
 			'missing_featured_images' => $missing_featured_images,
+			'missing_attachment_files' => $missing_attachment_files,
+		);
+	}
+
+	/**
+	 * Scan one Media Library image attachment for missing local files.
+	 *
+	 * @param int $attachment_id Attachment ID.
+	 * @return array
+	 */
+	private function scan_media_attachment( $attachment_id ) {
+		$items = array();
+
+		if ( $this->is_result_ignored( $attachment_id, '' ) ) {
+			return array(
+				'items'                    => $items,
+				'images_found'             => 0,
+				'broken_images'            => 0,
+				'missing_featured_images'  => 0,
+				'missing_attachment_files' => 0,
+			);
+		}
+
+		$post_title = get_the_title( $attachment_id );
+		$mime_type  = get_post_mime_type( $attachment_id );
+
+		if ( 0 !== strpos( (string) $mime_type, 'image/' ) ) {
+			return array(
+				'items'                    => $items,
+				'images_found'             => 0,
+				'broken_images'            => 0,
+				'missing_featured_images'  => 0,
+				'missing_attachment_files' => 0,
+			);
+		}
+
+		$uploads                 = wp_get_upload_dir();
+		$metadata                = wp_get_attachment_metadata( $attachment_id );
+		$checks                  = array();
+		$original_path           = get_attached_file( $attachment_id );
+		$original_url            = wp_get_attachment_url( $attachment_id );
+		$missing_attachment_files = 0;
+		$checked_files           = 0;
+
+		if ( $original_path ) {
+			$checks[] = array(
+				'path'  => $original_path,
+				'url'   => $original_url,
+				'label' => __( 'Original file is missing', 'kreativ-broken-image-finder' ),
+			);
+		}
+
+		if ( ! empty( $metadata['file'] ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+			$relative_dir = trailingslashit( dirname( $metadata['file'] ) );
+			$relative_dir = './' === $relative_dir ? '' : $relative_dir;
+
+			foreach ( $metadata['sizes'] as $size_name => $size_data ) {
+				if ( empty( $size_data['file'] ) ) {
+					continue;
+				}
+
+				$relative_file = $relative_dir . $size_data['file'];
+				$checks[]      = array(
+					'path'  => trailingslashit( $uploads['basedir'] ) . $relative_file,
+					'url'   => trailingslashit( $uploads['baseurl'] ) . $relative_file,
+					'label' => sprintf(
+						/* translators: %s: image size name. */
+						__( 'Generated image size "%s" is missing', 'kreativ-broken-image-finder' ),
+						$size_name
+					),
+				);
+			}
+		}
+
+		foreach ( $checks as $check ) {
+			if ( $this->is_result_ignored( $attachment_id, $check['url'] ) ) {
+				continue;
+			}
+
+			$checked_files++;
+
+			if ( ! file_exists( $check['path'] ) ) {
+				$missing_attachment_files++;
+
+				$items[] = array(
+					'post_id'     => $attachment_id,
+					'post_title'  => $post_title,
+					'post_type'   => 'attachment',
+					'image_url'   => $check['url'],
+					'source'      => 'media_library',
+					'status_code' => '',
+					'error'       => $check['label'],
+				);
+			}
+		}
+
+		return array(
+			'items'                    => $items,
+			'images_found'             => $checked_files,
+			'broken_images'            => 0,
+			'missing_featured_images'  => 0,
+			'missing_attachment_files' => $missing_attachment_files,
 		);
 	}
 
@@ -327,22 +603,98 @@ class Kreativ_Broken_Image_Finder {
 			return $urls;
 		}
 
-		if ( preg_match_all( '/<img[^>]+src=["\']([^"\']+)["\']/i', $content, $matches ) ) {
-			foreach ( $matches[1] as $url ) {
-				$url = trim( $url );
+		if ( preg_match_all( '/<(?:img|source)\b[^>]*>/i', $content, $matches ) ) {
+			foreach ( $matches[0] as $tag ) {
+				foreach ( array( 'src', 'data-src', 'data-lazy-src', 'data-original', 'data-actualsrc', 'data-full-url' ) as $attribute ) {
+					$url = $this->get_tag_attribute( $tag, $attribute );
 
-				// Skip empty and data URIs.
-				if ( empty( $url ) || 0 === strpos( $url, 'data:' ) ) {
-					continue;
+					if ( $this->is_checkable_image_reference( $url ) ) {
+						$urls[] = $url;
+					}
 				}
 
-				$urls[] = $url;
+				foreach ( array( 'srcset', 'data-srcset', 'data-lazy-srcset' ) as $attribute ) {
+					$srcset = $this->get_tag_attribute( $tag, $attribute );
+					$urls   = array_merge( $urls, $this->extract_urls_from_srcset( $srcset ) );
+				}
+			}
+		}
+
+		if ( preg_match_all( '/url\(\s*([\'"]?)(.*?)\1\s*\)/i', $content, $matches ) ) {
+			foreach ( $matches[2] as $url ) {
+				if ( $this->is_checkable_image_reference( $url ) ) {
+					$urls[] = trim( $url );
+				}
 			}
 		}
 
 		$urls = array_values( array_unique( $urls ) );
 
 		return $urls;
+	}
+
+	/**
+	 * Get one HTML attribute from a tag-like string.
+	 *
+	 * @param string $tag HTML tag.
+	 * @param string $attribute Attribute name.
+	 * @return string
+	 */
+	private function get_tag_attribute( $tag, $attribute ) {
+		$pattern = '/\s' . preg_quote( $attribute, '/' ) . '\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))/i';
+
+		if ( ! preg_match( $pattern, $tag, $matches ) ) {
+			return '';
+		}
+
+		for ( $i = 1; $i <= 3; $i++ ) {
+			if ( isset( $matches[ $i ] ) && '' !== $matches[ $i ] ) {
+				return html_entity_decode( trim( $matches[ $i ] ), ENT_QUOTES, get_bloginfo( 'charset' ) );
+			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * Extract URLs from an img/source srcset value.
+	 *
+	 * @param string $srcset Srcset attribute value.
+	 * @return array
+	 */
+	private function extract_urls_from_srcset( $srcset ) {
+		$urls = array();
+
+		if ( '' === $srcset ) {
+			return $urls;
+		}
+
+		foreach ( explode( ',', $srcset ) as $candidate ) {
+			$parts = preg_split( '/\s+/', trim( $candidate ) );
+			$url   = isset( $parts[0] ) ? trim( $parts[0] ) : '';
+
+			if ( $this->is_checkable_image_reference( $url ) ) {
+				$urls[] = html_entity_decode( $url, ENT_QUOTES, get_bloginfo( 'charset' ) );
+			}
+		}
+
+		return $urls;
+	}
+
+	/**
+	 * Determine if a discovered reference should be checked as an image.
+	 *
+	 * @param string $url Image reference.
+	 * @return bool
+	 */
+	private function is_checkable_image_reference( $url ) {
+		$url = trim( (string) $url );
+
+		if ( '' === $url || 0 === strpos( $url, 'data:' ) || 0 === strpos( $url, '#' ) ) {
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
@@ -408,7 +760,7 @@ class Kreativ_Broken_Image_Finder {
 	 * @return int
 	 */
 	private function reset_scan_state( $batch_size ) {
-		$total = $this->count_scannable_posts();
+		$total = $this->count_scannable_items();
 
 		delete_option( self::OPTION_QUEUE );
 		delete_option( self::OPTION_URL_CACHE );
@@ -420,6 +772,7 @@ class Kreativ_Broken_Image_Finder {
 				'total_images_found'      => 0,
 				'broken_images'           => 0,
 				'missing_featured_images' => 0,
+				'missing_attachment_files' => 0,
 				'scan_time'               => 0,
 			)
 		);
@@ -464,17 +817,18 @@ class Kreativ_Broken_Image_Finder {
 	 *
 	 * @param int   $pointer Current pointer.
 	 * @param int   $batch_size Batch size.
-	 * @param int   $total Total posts in scan.
+	 * @param int   $total Total items in scan.
 	 * @param array $progress Progress payload.
 	 * @param array $stats Scan stats payload.
 	 * @return int
 	 */
 	private function process_scan_batch( $pointer, $batch_size, $total, $progress, $stats ) {
-		$posts         = $this->get_scan_batch_posts( $pointer, $batch_size );
+		$posts         = $this->get_scan_batch_items( $pointer, $batch_size );
 		$batch_items   = array();
 		$delta_images  = 0;
 		$delta_broken  = 0;
 		$delta_missing = 0;
+		$delta_missing_files = 0;
 
 		$this->get_url_check_cache();
 
@@ -483,12 +837,14 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		foreach ( $posts as $post_id ) {
-			$scan_data = $this->scan_single_post( $post_id );
+			$post_type = get_post_type( $post_id );
+			$scan_data = ( 'attachment' === $post_type ) ? $this->scan_media_attachment( $post_id ) : $this->scan_single_post( $post_id );
 
 			$batch_items   = array_merge( $batch_items, $scan_data['items'] );
 			$delta_images  += $scan_data['images_found'];
 			$delta_broken  += $scan_data['broken_images'];
 			$delta_missing += $scan_data['missing_featured_images'];
+			$delta_missing_files += $scan_data['missing_attachment_files'];
 		}
 
 		$pointer += count( $posts );
@@ -502,6 +858,7 @@ class Kreativ_Broken_Image_Finder {
 				'total_images_found'      => 0,
 				'broken_images'           => 0,
 				'missing_featured_images' => 0,
+				'missing_attachment_files' => 0,
 				'scan_time'               => 0,
 			);
 		}
@@ -509,6 +866,7 @@ class Kreativ_Broken_Image_Finder {
 		$stats['total_images_found']      += $delta_images;
 		$stats['broken_images']           += $delta_broken;
 		$stats['missing_featured_images'] += $delta_missing;
+		$stats['missing_attachment_files'] += $delta_missing_files;
 		update_option( self::OPTION_STATS, $stats );
 
 		$progress['processed_posts'] = $pointer;
@@ -528,6 +886,9 @@ class Kreativ_Broken_Image_Finder {
 		$defaults = array(
 			'missing_featured_mode'       => 'all',
 			'missing_featured_post_types' => array(),
+			'ignored_urls'                => array(),
+			'ignored_domains'             => array(),
+			'ignored_post_ids'            => array(),
 		);
 
 		$settings = get_option( self::OPTION_SETTINGS, array() );
@@ -539,6 +900,9 @@ class Kreativ_Broken_Image_Finder {
 				$this->get_scannable_post_types()
 			)
 		);
+		$settings['ignored_urls']       = array_values( array_unique( array_filter( array_map( 'esc_url_raw', (array) $settings['ignored_urls'] ) ) ) );
+		$settings['ignored_domains']    = array_values( array_unique( array_filter( array_map( array( $this, 'normalize_domain' ), (array) $settings['ignored_domains'] ) ) ) );
+		$settings['ignored_post_ids']   = array_values( array_unique( array_filter( array_map( 'absint', (array) $settings['ignored_post_ids'] ) ) ) );
 
 		return $settings;
 	}
@@ -561,6 +925,105 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Determine whether a potential result should be skipped.
+	 *
+	 * @param int    $post_id Post or attachment ID.
+	 * @param string $url Image URL.
+	 * @return bool
+	 */
+	private function is_result_ignored( $post_id, $url ) {
+		$settings = $this->get_settings();
+		$post_id  = absint( $post_id );
+		$url      = trim( (string) $url );
+
+		if ( $post_id > 0 && in_array( $post_id, $settings['ignored_post_ids'], true ) ) {
+			return true;
+		}
+
+		if ( '' !== $url && in_array( $url, $settings['ignored_urls'], true ) ) {
+			return true;
+		}
+
+		$domain = $this->normalize_domain( $url );
+
+		return '' !== $domain && in_array( $domain, $settings['ignored_domains'], true );
+	}
+
+	/**
+	 * Sanitize a newline or comma separated text list.
+	 *
+	 * @param string|array $value Raw value.
+	 * @return array
+	 */
+	private function sanitize_textarea_list( $value ) {
+		$items = is_array( $value ) ? $value : preg_split( '/[\r\n,]+/', (string) $value );
+		$items = array_map( 'trim', (array) $items );
+		$items = array_map( 'esc_url_raw', $items );
+
+		return array_values( array_unique( array_filter( $items ) ) );
+	}
+
+	/**
+	 * Sanitize a newline or comma separated domain list.
+	 *
+	 * @param string|array $value Raw value.
+	 * @return array
+	 */
+	private function sanitize_domain_list( $value ) {
+		$items = is_array( $value ) ? $value : preg_split( '/[\r\n,]+/', (string) $value );
+		$items = array_map( array( $this, 'normalize_domain' ), (array) $items );
+
+		return array_values( array_unique( array_filter( $items ) ) );
+	}
+
+	/**
+	 * Sanitize a newline or comma separated ID list.
+	 *
+	 * @param string|array $value Raw value.
+	 * @return array
+	 */
+	private function sanitize_id_list( $value ) {
+		$items = is_array( $value ) ? $value : preg_split( '/[\r\n,]+/', (string) $value );
+		$items = array_map( 'absint', (array) $items );
+
+		return array_values( array_unique( array_filter( $items ) ) );
+	}
+
+	/**
+	 * Normalize a URL or host into a lowercase domain.
+	 *
+	 * @param string $value URL or domain.
+	 * @return string
+	 */
+	private function normalize_domain( $value ) {
+		$value = trim( strtolower( (string) $value ) );
+
+		if ( '' === $value ) {
+			return '';
+		}
+
+		if ( ( 0 === strpos( $value, '/' ) && 0 !== strpos( $value, '//' ) ) || false !== strpos( $value, ' ' ) ) {
+			return '';
+		}
+
+		if ( false === strpos( $value, '://' ) && 0 !== strpos( $value, '//' ) && false !== strpos( $value, '/' ) ) {
+			return '';
+		}
+
+		if ( false === strpos( $value, '://' ) && 0 !== strpos( $value, '//' ) ) {
+			$value = 'https://' . $value;
+		}
+
+		$host = wp_parse_url( $value, PHP_URL_HOST );
+
+		if ( ! $host ) {
+			return '';
+		}
+
+		return preg_replace( '/^www\./', '', strtolower( $host ) );
 	}
 
 	/**
@@ -664,27 +1127,89 @@ class Kreativ_Broken_Image_Finder {
 	}
 
 	/**
-	 * Get one scan batch of published post IDs.
+	 * Count content posts plus image attachments included in a full scan.
+	 *
+	 * @return int
+	 */
+	private function count_scannable_items() {
+		return $this->count_scannable_posts() + $this->count_scannable_media_attachments();
+	}
+
+	/**
+	 * Count image attachments in the Media Library.
+	 *
+	 * @return int
+	 */
+	private function count_scannable_media_attachments() {
+		$query = new WP_Query(
+			array(
+				'post_type'              => 'attachment',
+				'post_status'            => 'inherit',
+				'post_mime_type'         => 'image',
+				'fields'                 => 'ids',
+				'posts_per_page'         => 1,
+				'no_found_rows'          => false,
+				'update_post_meta_cache' => false,
+				'update_post_term_cache' => false,
+			)
+		);
+
+		return (int) $query->found_posts;
+	}
+
+	/**
+	 * Get one scan batch of content post and image attachment IDs.
 	 *
 	 * @param int $offset Batch offset.
 	 * @param int $batch_size Batch size.
 	 * @return array
 	 */
-	private function get_scan_batch_posts( $offset, $batch_size ) {
-		return get_posts(
-			array(
-				'post_type'              => $this->get_scannable_post_types(),
-				'post_status'            => 'publish',
-				'fields'                 => 'ids',
-				'posts_per_page'         => $batch_size,
-				'offset'                 => $offset,
-				'orderby'                => 'ID',
-				'order'                  => 'ASC',
-				'no_found_rows'          => true,
-				'update_post_meta_cache' => false,
-				'update_post_term_cache' => false,
-			)
-		);
+	private function get_scan_batch_items( $offset, $batch_size ) {
+		$content_total = $this->count_scannable_posts();
+		$items         = array();
+
+		if ( $offset < $content_total ) {
+			$content_limit = min( $batch_size, $content_total - $offset );
+			$items         = get_posts(
+				array(
+					'post_type'              => $this->get_scannable_post_types(),
+					'post_status'            => 'publish',
+					'fields'                 => 'ids',
+					'posts_per_page'         => $content_limit,
+					'offset'                 => $offset,
+					'orderby'                => 'ID',
+					'order'                  => 'ASC',
+					'no_found_rows'          => true,
+					'update_post_meta_cache' => false,
+					'update_post_term_cache' => false,
+				)
+			);
+		}
+
+		$remaining = $batch_size - count( $items );
+
+		if ( $remaining > 0 ) {
+			$attachment_offset = max( 0, $offset - $content_total );
+			$attachments       = get_posts(
+				array(
+					'post_type'              => 'attachment',
+					'post_status'            => 'inherit',
+					'post_mime_type'         => 'image',
+					'fields'                 => 'ids',
+					'posts_per_page'         => $remaining,
+					'offset'                 => $attachment_offset,
+					'orderby'                => 'ID',
+					'order'                  => 'ASC',
+					'no_found_rows'          => true,
+					'update_post_meta_cache' => false,
+					'update_post_term_cache' => false,
+				)
+			);
+
+			$items = array_merge( $items, $attachments );
+		}
+
+		return $items;
 	}
 
 	/**
@@ -698,6 +1223,117 @@ class Kreativ_Broken_Image_Finder {
 			'redirection'         => 3,
 			'limit_response_size' => 1024,
 		);
+	}
+
+	/**
+	 * Get saved results filtered by current request parameters.
+	 *
+	 * @return array
+	 */
+	private function get_filtered_results_from_request() {
+		$results = get_option( self::OPTION_RESULTS, array() );
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$post_type_filter = isset( $_GET['kbif_post_type'] ) ? sanitize_text_field( wp_unslash( $_GET['kbif_post_type'] ) ) : '';
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$source_filter = isset( $_GET['kbif_source'] ) ? sanitize_text_field( wp_unslash( $_GET['kbif_source'] ) ) : '';
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$status_filter = isset( $_GET['kbif_status'] ) ? sanitize_text_field( wp_unslash( $_GET['kbif_status'] ) ) : '';
+
+		return array_values(
+			array_filter(
+				$results,
+				function( $row ) use ( $post_type_filter, $source_filter, $status_filter ) {
+					$row_post_type = isset( $row['post_type'] ) ? $row['post_type'] : '';
+					$row_source    = isset( $row['source'] ) ? $row['source'] : '';
+					$row_status    = isset( $row['status_code'] ) ? $row['status_code'] : '';
+
+					if ( $post_type_filter && $row_post_type !== $post_type_filter ) {
+						return false;
+					}
+					if ( $source_filter && $row_source !== $source_filter ) {
+						return false;
+					}
+					if ( '' !== $status_filter && '' !== $row_status && intval( $status_filter ) !== intval( $row_status ) ) {
+						return false;
+					}
+					if ( '' !== $status_filter && '' === $row_status ) {
+						return false;
+					}
+					return true;
+				}
+			)
+		);
+	}
+
+	/**
+	 * Keep result-derived summary counts current after recheck or ignore actions.
+	 *
+	 * @param array $results Saved results.
+	 */
+	private function sync_result_counts_to_stats( $results ) {
+		$stats = get_option( self::OPTION_STATS, array() );
+
+		$stats['broken_images']            = 0;
+		$stats['missing_featured_images']  = 0;
+		$stats['missing_attachment_files'] = 0;
+
+		foreach ( $results as $row ) {
+			$source = isset( $row['source'] ) ? $row['source'] : '';
+
+			if ( 'missing_featured' === $source ) {
+				$stats['missing_featured_images']++;
+			} elseif ( 'media_library' === $source ) {
+				$stats['missing_attachment_files']++;
+			} else {
+				$stats['broken_images']++;
+			}
+		}
+
+		update_option( self::OPTION_STATS, $stats );
+	}
+
+	/**
+	 * Redirect back to the admin report.
+	 *
+	 * @param array $args Query args to add.
+	 */
+	private function redirect_to_admin_page( $args = array() ) {
+		$url = wp_get_referer();
+
+		if ( ! $url ) {
+			$url = add_query_arg(
+				array(
+					'page' => 'kreativ-broken-image-finder',
+				),
+				admin_url( 'admin.php' )
+			);
+		}
+
+		wp_safe_redirect( add_query_arg( $args, $url ) );
+		exit;
+	}
+
+	/**
+	 * Human-readable source label for report rows.
+	 *
+	 * @param string $source Result source.
+	 * @return string
+	 */
+	private function get_source_label( $source ) {
+		if ( 'featured' === $source ) {
+			return __( 'Featured image', 'kreativ-broken-image-finder' );
+		}
+
+		if ( 'missing_featured' === $source ) {
+			return __( 'Missing featured image', 'kreativ-broken-image-finder' );
+		}
+
+		if ( 'media_library' === $source ) {
+			return __( 'Media Library file', 'kreativ-broken-image-finder' );
+		}
+
+		return __( 'Content', 'kreativ-broken-image-finder' );
 	}
 
 	/**
@@ -837,6 +1473,7 @@ class Kreativ_Broken_Image_Finder {
 				'total_images_found'      => 0,
 				'broken_images'           => 0,
 				'missing_featured_images' => 0,
+				'missing_attachment_files' => 0,
 				'scan_time'               => 0,
 			)
 		);
@@ -844,6 +1481,10 @@ class Kreativ_Broken_Image_Finder {
 		$scanned = isset( $_GET['kbif_scanned'] ) && '1' === $_GET['kbif_scanned'];
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$settings_updated = isset( $_GET['kbif_settings_updated'] ) && '1' === $_GET['kbif_settings_updated'];
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$rechecked = isset( $_GET['kbif_rechecked'] ) && '1' === $_GET['kbif_rechecked'];
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$ignored = isset( $_GET['kbif_ignored'] ) && '1' === $_GET['kbif_ignored'];
 
 		// Filters.
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -866,24 +1507,7 @@ class Kreativ_Broken_Image_Finder {
 		sort( $distinct_status );
 
 		// Apply filters.
-		$filtered_results = array_filter(
-			$results,
-			function( $row ) use ( $post_type_filter, $source_filter, $status_filter ) {
-				if ( $post_type_filter && $row['post_type'] !== $post_type_filter ) {
-					return false;
-				}
-				if ( $source_filter && $row['source'] !== $source_filter ) {
-					return false;
-				}
-				if ( '' !== $status_filter && '' !== $row['status_code'] && intval( $status_filter ) !== intval( $row['status_code'] ) ) {
-					return false;
-				}
-				if ( '' !== $status_filter && '' === $row['status_code'] ) {
-					return false;
-				}
-				return true;
-			}
-		);
+		$filtered_results = $this->get_filtered_results_from_request();
 
 		// Pagination.
 		$per_page    = 20;
@@ -901,7 +1525,7 @@ class Kreativ_Broken_Image_Finder {
 		<div class="wrap">
 			<h1><?php esc_html_e( 'Kreativ Broken Image Finder', 'kreativ-broken-image-finder' ); ?></h1>
 
-			<p><?php esc_html_e( 'Scan your posts, pages and custom post types for broken images inside the content and featured images. The scan runs in the background in small chunks to avoid timeouts.', 'kreativ-broken-image-finder' ); ?></p>
+			<p><?php esc_html_e( 'Scan your posts, pages, custom post types and Media Library image files. The scan runs in the background in small chunks to avoid timeouts.', 'kreativ-broken-image-finder' ); ?></p>
 
 			<?php if ( $scanned ) : ?>
 				<div class="notice notice-success is-dismissible">
@@ -912,6 +1536,18 @@ class Kreativ_Broken_Image_Finder {
 			<?php if ( $settings_updated ) : ?>
 				<div class="notice notice-success is-dismissible">
 					<p><?php esc_html_e( 'Settings saved.', 'kreativ-broken-image-finder' ); ?></p>
+				</div>
+			<?php endif; ?>
+
+			<?php if ( $rechecked ) : ?>
+				<div class="notice notice-success is-dismissible">
+					<p><?php esc_html_e( 'Item rechecked and report updated.', 'kreativ-broken-image-finder' ); ?></p>
+				</div>
+			<?php endif; ?>
+
+			<?php if ( $ignored ) : ?>
+				<div class="notice notice-success is-dismissible">
+					<p><?php esc_html_e( 'Ignore rule added and matching results removed.', 'kreativ-broken-image-finder' ); ?></p>
 				</div>
 			<?php endif; ?>
 
@@ -970,6 +1606,27 @@ class Kreativ_Broken_Image_Finder {
 								<p class="description"><?php esc_html_e( 'These selections apply only when "selected post types" is chosen above.', 'kreativ-broken-image-finder' ); ?></p>
 							</td>
 						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Ignored image URLs', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<textarea name="kbif_ignored_urls" rows="4" class="large-text code"><?php echo esc_textarea( implode( "\n", $settings['ignored_urls'] ) ); ?></textarea>
+								<p class="description"><?php esc_html_e( 'One URL per line. Matching image URLs are skipped in future scans and hidden from the saved report.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Ignored domains', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<textarea name="kbif_ignored_domains" rows="3" class="large-text code"><?php echo esc_textarea( implode( "\n", $settings['ignored_domains'] ) ); ?></textarea>
+								<p class="description"><?php esc_html_e( 'One domain per line, such as cdn.example.com. The scanner skips image URLs from these domains.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Ignored post or attachment IDs', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<textarea name="kbif_ignored_post_ids" rows="3" class="large-text code"><?php echo esc_textarea( implode( "\n", $settings['ignored_post_ids'] ) ); ?></textarea>
+								<p class="description"><?php esc_html_e( 'One ID per line. Matching posts or media attachments are skipped.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
 					</tbody>
 				</table>
 
@@ -982,7 +1639,7 @@ class Kreativ_Broken_Image_Finder {
 			<table class="widefat striped" style="max-width: 700px;">
 				<tbody>
 					<tr>
-						<th><?php esc_html_e( 'Total posts scanned', 'kreativ-broken-image-finder' ); ?></th>
+						<th><?php esc_html_e( 'Total items scanned', 'kreativ-broken-image-finder' ); ?></th>
 						<td><?php echo esc_html( (int) $stats['total_posts'] ); ?></td>
 					</tr>
 					<tr>
@@ -1007,6 +1664,10 @@ class Kreativ_Broken_Image_Finder {
 						<td><?php echo esc_html( (int) $stats['missing_featured_images'] ); ?></td>
 					</tr>
 					<tr>
+						<th><?php esc_html_e( 'Missing Media Library files', 'kreativ-broken-image-finder' ); ?></th>
+						<td><?php echo esc_html( isset( $stats['missing_attachment_files'] ) ? (int) $stats['missing_attachment_files'] : 0 ); ?></td>
+					</tr>
+					<tr>
 						<th><?php esc_html_e( 'Scan time (seconds)', 'kreativ-broken-image-finder' ); ?></th>
 						<td><?php echo esc_html( $stats['scan_time'] ); ?></td>
 					</tr>
@@ -1024,6 +1685,7 @@ class Kreativ_Broken_Image_Finder {
 					<?php
 					$post_types = get_post_types( array( 'public' => true ), 'names' );
 					unset( $post_types['attachment'] );
+					$post_types['attachment'] = 'attachment';
 					foreach ( $post_types as $pt ) :
 						?>
 						<option value="<?php echo esc_attr( $pt ); ?>" <?php selected( $post_type_filter, $pt ); ?>>
@@ -1043,6 +1705,9 @@ class Kreativ_Broken_Image_Finder {
 					<option value="missing_featured" <?php selected( $source_filter, 'missing_featured' ); ?>>
 						<?php esc_html_e( 'Missing Featured Image', 'kreativ-broken-image-finder' ); ?>
 					</option>
+					<option value="media_library" <?php selected( $source_filter, 'media_library' ); ?>>
+						<?php esc_html_e( 'Media Library Files', 'kreativ-broken-image-finder' ); ?>
+					</option>
 				</select>
 
 				<select name="kbif_status">
@@ -1055,6 +1720,22 @@ class Kreativ_Broken_Image_Finder {
 				</select>
 
 				<input type="submit" class="button" value="<?php esc_attr_e( 'Apply Filters', 'kreativ-broken-image-finder' ); ?>">
+				<?php
+				$export_url = wp_nonce_url(
+					add_query_arg(
+						array(
+							'action'         => 'kbif_export_csv',
+							'kbif_post_type' => $post_type_filter,
+							'kbif_source'    => $source_filter,
+							'kbif_status'    => $status_filter,
+						),
+						admin_url( 'admin-post.php' )
+					),
+					'kbif_export_csv',
+					'kbif_export_nonce'
+				);
+				?>
+				<a class="button" href="<?php echo esc_url( $export_url ); ?>"><?php esc_html_e( 'Export CSV', 'kreativ-broken-image-finder' ); ?></a>
 			</form>
 
 			<?php if ( empty( $paged_results ) ) : ?>
@@ -1069,6 +1750,7 @@ class Kreativ_Broken_Image_Finder {
 							<th><?php esc_html_e( 'Image URL', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Error', 'kreativ-broken-image-finder' ); ?></th>
+							<th><?php esc_html_e( 'Actions', 'kreativ-broken-image-finder' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1080,17 +1762,7 @@ class Kreativ_Broken_Image_Finder {
 									</a>
 								</td>
 								<td><?php echo esc_html( $row['post_type'] ); ?></td>
-								<td>
-									<?php
-									if ( 'featured' === $row['source'] ) {
-										esc_html_e( 'Featured image', 'kreativ-broken-image-finder' );
-									} elseif ( 'missing_featured' === $row['source'] ) {
-										esc_html_e( 'Missing featured image', 'kreativ-broken-image-finder' );
-									} else {
-										esc_html_e( 'Content', 'kreativ-broken-image-finder' );
-									}
-									?>
-								</td>
+								<td><?php echo esc_html( $this->get_source_label( $row['source'] ) ); ?></td>
 								<td style="word-break: break-all;">
 									<?php if ( ! empty( $row['image_url'] ) ) : ?>
 										<a href="<?php echo esc_url( $row['image_url'] ); ?>" target="_blank" rel="noopener noreferrer">
@@ -1102,6 +1774,45 @@ class Kreativ_Broken_Image_Finder {
 								</td>
 								<td><?php echo '' === $row['status_code'] ? '—' : esc_html( (int) $row['status_code'] ); ?></td>
 								<td><?php echo esc_html( $row['error'] ); ?></td>
+								<td>
+									<div class="kbif-actions">
+										<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+											<input type="hidden" name="action" value="kbif_recheck_post">
+											<input type="hidden" name="post_id" value="<?php echo esc_attr( (int) $row['post_id'] ); ?>">
+											<?php wp_nonce_field( 'kbif_recheck_post_' . (int) $row['post_id'], 'kbif_recheck_nonce' ); ?>
+											<button type="submit" class="button button-small"><?php esc_html_e( 'Recheck', 'kreativ-broken-image-finder' ); ?></button>
+										</form>
+
+										<?php if ( ! empty( $row['image_url'] ) ) : ?>
+											<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+												<input type="hidden" name="action" value="kbif_ignore_result">
+												<input type="hidden" name="ignore_type" value="url">
+												<input type="hidden" name="ignore_value" value="<?php echo esc_attr( $row['image_url'] ); ?>">
+												<?php wp_nonce_field( 'kbif_ignore_result', 'kbif_ignore_nonce' ); ?>
+												<button type="submit" class="button button-small"><?php esc_html_e( 'Ignore URL', 'kreativ-broken-image-finder' ); ?></button>
+											</form>
+
+											<?php $row_domain = $this->normalize_domain( $row['image_url'] ); ?>
+											<?php if ( '' !== $row_domain ) : ?>
+												<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+													<input type="hidden" name="action" value="kbif_ignore_result">
+													<input type="hidden" name="ignore_type" value="domain">
+													<input type="hidden" name="ignore_value" value="<?php echo esc_attr( $row_domain ); ?>">
+													<?php wp_nonce_field( 'kbif_ignore_result', 'kbif_ignore_nonce' ); ?>
+													<button type="submit" class="button button-small"><?php esc_html_e( 'Ignore Domain', 'kreativ-broken-image-finder' ); ?></button>
+												</form>
+											<?php endif; ?>
+										<?php endif; ?>
+
+										<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+											<input type="hidden" name="action" value="kbif_ignore_result">
+											<input type="hidden" name="ignore_type" value="post">
+											<input type="hidden" name="ignore_value" value="<?php echo esc_attr( (int) $row['post_id'] ); ?>">
+											<?php wp_nonce_field( 'kbif_ignore_result', 'kbif_ignore_nonce' ); ?>
+											<button type="submit" class="button button-small"><?php esc_html_e( 'Ignore Item', 'kreativ-broken-image-finder' ); ?></button>
+										</form>
+									</div>
+								</td>
 							</tr>
 						<?php endforeach; ?>
 					</tbody>
@@ -1201,15 +1912,16 @@ if ( defined( 'WP_CLI' ) && WP_CLI && ! class_exists( 'Kreativ_Broken_Image_Find
 				'table',
 				array(
 					array(
-						'total_posts'             => isset( $stats['total_posts'] ) ? (int) $stats['total_posts'] : 0,
+						'total_items'             => isset( $stats['total_posts'] ) ? (int) $stats['total_posts'] : 0,
 						'total_images_found'      => isset( $stats['total_images_found'] ) ? (int) $stats['total_images_found'] : 0,
 						'broken_images'           => isset( $stats['broken_images'] ) ? (int) $stats['broken_images'] : 0,
 						'missing_featured_images' => isset( $stats['missing_featured_images'] ) ? (int) $stats['missing_featured_images'] : 0,
+						'missing_attachment_files' => isset( $stats['missing_attachment_files'] ) ? (int) $stats['missing_attachment_files'] : 0,
 						'scan_time'               => isset( $stats['scan_time'] ) ? $stats['scan_time'] : 0,
 						'reported_items'          => count( $results ),
 					),
 				),
-				array( 'total_posts', 'total_images_found', 'broken_images', 'missing_featured_images', 'scan_time', 'reported_items' )
+				array( 'total_items', 'total_images_found', 'broken_images', 'missing_featured_images', 'missing_attachment_files', 'scan_time', 'reported_items' )
 			);
 		}
 	}

@@ -34,7 +34,7 @@ jQuery(function ($) {
             pointer = 0;
 
             if (total === 0) {
-                $('#kbif-progress-text').text('No posts found to scan.');
+                $('#kbif-progress-text').text('No items found to scan.');
                 running = false;
                 return;
             }
@@ -69,7 +69,7 @@ jQuery(function ($) {
                     percent = 100;
                 }
                 $('#kbif-progress-bar').css('width', percent + '%');
-                $('#kbif-progress-text').text('Scanning ' + pointer + '/' + total + ' posts...');
+                $('#kbif-progress-text').text('Scanning ' + pointer + '/' + total + ' items...');
             }
 
             if (data.finished) {

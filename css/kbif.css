@@ -24,3 +24,13 @@
     margin-top: 8px;
     font-weight: 600;
 }
+
+.kbif-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.kbif-actions form {
+    margin: 0;
+}

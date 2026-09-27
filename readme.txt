@@ -4,7 +4,7 @@ Tags: broken images, 404, seo, media, maintenance
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.2.3
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,12 +25,17 @@ No external services, no tracking, no bloat - everything runs locally on your se
 == Features ==
 
 * Scan all public post types (posts, pages, custom post types)
+* Scan Media Library image files and generated sizes for missing local files
 * Detect broken images inside post content
+* Detect images in `srcset`, lazy-load attributes and CSS `url(...)` references
 * Detect broken featured images
 * Cache repeated image URL checks during a scan for faster results
 * Optional missing featured image reporting by post type
+* Ignore specific image URLs, domains, posts or media attachments
+* Recheck a single affected item after fixing it
+* Export the current filtered report to CSV
 * WP-CLI support with `wp kbif scan`
-* Summary with posts scanned, images checked, broken images found and scan time
+* Summary with items scanned, images/files checked, broken images found and scan time
 * Detailed report with direct links to edit affected posts
 * Supports relative and protocol-relative image URLs
 * Lightweight and GDPR-friendly (no cookies, no external API calls)
@@ -75,10 +80,17 @@ The scan runs only when manually triggered from the admin dashboard and does not
 
 == Upgrade Notice ==
 
-= 1.2.3 =
-Adds configurable missing featured image rules, scan-time URL caching, and a new WP-CLI scan command.
+= 1.3.0 =
+Adds expanded image detection, Media Library file checks, ignore rules, single-item recheck actions, and CSV export.
 
 == Changelog ==
+
+= 1.3.0 =
+* Added detection for `srcset`, lazy-load image attributes, `<source>` images and CSS `url(...)` references.
+* Added Media Library integrity checks for missing original files and generated image sizes.
+* Added ignore rules for image URLs, domains, posts and media attachments.
+* Added per-item recheck actions in the report table.
+* Added CSV export for the current filtered report.
 
 = 1.2.3 =
 * Added per-scan URL caching to avoid repeating the same remote image checks across posts.
