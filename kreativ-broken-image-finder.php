@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Kreativ Broken Image Finder
  * Plugin URI:        https://kreativfont.com/tools/kreativ-broken-image-finder-wp-plugin
- * Description:       Scan your site for broken images in posts, pages and custom post types, and get a simple report inside your dashboard.
+ * Description:       Scan your site for broken images in content, excerpts, custom fields, featured images and the Media Library, then review a report inside your dashboard.
  * Version:           1.3.0
  * Author:            Andrei Olaru
  * Author URI:        https://kreativfont.com/
@@ -180,6 +180,7 @@ class Kreativ_Broken_Image_Finder {
 				'Post Type',
 				'Edit URL',
 				'Source',
+				'Field',
 				'Image URL',
 				'Status Code',
 				'Error',
@@ -195,6 +196,7 @@ class Kreativ_Broken_Image_Finder {
 					isset( $row['post_type'] ) ? $row['post_type'] : '',
 					! empty( $row['post_id'] ) ? get_edit_post_link( (int) $row['post_id'], 'raw' ) : '',
 					isset( $row['source'] ) ? $row['source'] : '',
+					isset( $row['field'] ) ? $row['field'] : '',
 					isset( $row['image_url'] ) ? $row['image_url'] : '',
 					isset( $row['status_code'] ) ? $row['status_code'] : '',
 					isset( $row['error'] ) ? $row['error'] : '',
@@ -410,35 +412,39 @@ class Kreativ_Broken_Image_Finder {
 			);
 		}
 
-		// Content images.
-		$content        = $post->post_content;
-		$content_images = $this->find_images_in_content( $content );
+		// Scan standard content fields before checking post meta.
+		foreach (
+			array(
+				'content' => array(
+					'field' => 'post_content',
+					'value' => $post->post_content,
+				),
+				'excerpt' => array(
+					'field' => 'post_excerpt',
+					'value' => $post->post_excerpt,
+				),
+			) as $source => $field_data
+		) {
+			$field_scan = $this->scan_field_for_images(
+				$post_id,
+				$post_title,
+				$post_type,
+				$post_url,
+				$field_data['value'],
+				$source,
+				$field_data['field'],
+				false
+			);
 
-		foreach ( $content_images as $image_url ) {
-			if ( $this->is_result_ignored( $post_id, $image_url ) ) {
-				continue;
-			}
-
-			$images_found++;
-
-			usleep( 150000 );
-
-			$check = $this->check_image_url( $image_url, $post_url );
-
-			if ( $check['is_broken'] ) {
-				$broken_images++;
-
-				$items[] = array(
-					'post_id'     => $post_id,
-					'post_title'  => $post_title,
-					'post_type'   => $post_type,
-					'image_url'   => $image_url,
-					'source'      => 'content',
-					'status_code' => $check['status_code'],
-					'error'       => $check['error_message'],
-				);
-			}
+			$items        = array_merge( $items, $field_scan['items'] );
+			$images_found += $field_scan['images_found'];
+			$broken_images += $field_scan['broken_images'];
 		}
+
+		$meta_scan = $this->scan_post_meta_for_images( $post_id, $post_title, $post_type, $post_url );
+		$items     = array_merge( $items, $meta_scan['items'] );
+		$images_found += $meta_scan['images_found'];
+		$broken_images += $meta_scan['broken_images'];
 
 		// Featured image & missing featured.
 		if ( has_post_thumbnail( $post_id ) ) {
@@ -460,6 +466,7 @@ class Kreativ_Broken_Image_Finder {
 							'post_type'   => $post_type,
 							'image_url'   => $image_url,
 							'source'      => 'featured',
+							'field'       => '_thumbnail_id',
 							'status_code' => $check['status_code'],
 							'error'       => $check['error_message'],
 						);
@@ -475,6 +482,7 @@ class Kreativ_Broken_Image_Finder {
 				'post_type'   => $post_type,
 				'image_url'   => '',
 				'source'      => 'missing_featured',
+				'field'       => '_thumbnail_id',
 				'status_code' => '',
 				'error'       => __( 'No featured image set', 'kreativ-broken-image-finder' ),
 			);
@@ -486,6 +494,106 @@ class Kreativ_Broken_Image_Finder {
 			'broken_images'           => $broken_images,
 			'missing_featured_images' => $missing_featured_images,
 			'missing_attachment_files' => $missing_attachment_files,
+		);
+	}
+
+	/**
+	 * Scan a content field or custom field value for broken image references.
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param string $post_title Post title.
+	 * @param string $post_type Post type.
+	 * @param string $post_url Post URL.
+	 * @param mixed  $value Field value.
+	 * @param string $source Result source.
+	 * @param string $field Field name.
+	 * @param bool   $resolve_attachment_ids Whether numeric values can be image attachment IDs.
+	 * @return array
+	 */
+	private function scan_field_for_images( $post_id, $post_title, $post_type, $post_url, $value, $source, $field, $resolve_attachment_ids ) {
+		$items         = array();
+		$images_found  = 0;
+		$broken_images = 0;
+		$image_urls    = $this->find_images_in_value( $value, $resolve_attachment_ids );
+
+		foreach ( $image_urls as $image_url ) {
+			if ( $this->is_result_ignored( $post_id, $image_url ) ) {
+				continue;
+			}
+
+			$images_found++;
+
+			usleep( 150000 );
+
+			$check = $this->check_image_url( $image_url, $post_url );
+
+			if ( ! $check['is_broken'] ) {
+				continue;
+			}
+
+			$broken_images++;
+			$items[] = array(
+				'post_id'     => $post_id,
+				'post_title'  => $post_title,
+				'post_type'   => $post_type,
+				'image_url'   => $image_url,
+				'source'      => $source,
+				'field'       => $field,
+				'status_code' => $check['status_code'],
+				'error'       => $check['error_message'],
+			);
+		}
+
+		return array(
+			'items'         => $items,
+			'images_found'  => $images_found,
+			'broken_images' => $broken_images,
+		);
+	}
+
+	/**
+	 * Scan all post meta values while retaining the meta key in the report.
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param string $post_title Post title.
+	 * @param string $post_type Post type.
+	 * @param string $post_url Post URL.
+	 * @return array
+	 */
+	private function scan_post_meta_for_images( $post_id, $post_title, $post_type, $post_url ) {
+		$items         = array();
+		$images_found  = 0;
+		$broken_images = 0;
+		$all_meta      = get_post_meta( $post_id );
+
+		foreach ( $all_meta as $meta_key => $meta_values ) {
+			// Featured images are checked separately with a more specific source.
+			if ( '_thumbnail_id' === $meta_key ) {
+				continue;
+			}
+
+			foreach ( (array) $meta_values as $meta_value ) {
+				$field_scan = $this->scan_field_for_images(
+					$post_id,
+					$post_title,
+					$post_type,
+					$post_url,
+					$meta_value,
+					'custom_field',
+					$meta_key,
+					true
+				);
+
+				$items        = array_merge( $items, $field_scan['items'] );
+				$images_found += $field_scan['images_found'];
+				$broken_images += $field_scan['broken_images'];
+			}
+		}
+
+		return array(
+			'items'         => $items,
+			'images_found'  => $images_found,
+			'broken_images' => $broken_images,
 		);
 	}
 
@@ -631,6 +739,66 @@ class Kreativ_Broken_Image_Finder {
 		$urls = array_values( array_unique( $urls ) );
 
 		return $urls;
+	}
+
+	/**
+	 * Find image URLs in a custom field value, including nested ACF-style values.
+	 *
+	 * @param mixed $value Field value.
+	 * @param bool  $resolve_attachment_ids Whether numeric values may resolve to image attachments.
+	 * @param int   $depth Current recursion depth.
+	 * @return array
+	 */
+	private function find_images_in_value( $value, $resolve_attachment_ids = false, $depth = 0 ) {
+		$urls = array();
+
+		if ( $depth > 8 || null === $value || is_bool( $value ) ) {
+			return $urls;
+		}
+
+		if ( is_array( $value ) || is_object( $value ) ) {
+			foreach ( (array) $value as $nested_value ) {
+				$urls = array_merge(
+					$urls,
+					$this->find_images_in_value( $nested_value, $resolve_attachment_ids, $depth + 1 )
+				);
+			}
+
+			return array_values( array_unique( $urls ) );
+		}
+
+		if ( $resolve_attachment_ids && is_numeric( $value ) && (int) $value > 0 && (string) (int) $value === (string) $value && wp_attachment_is_image( (int) $value ) ) {
+			$image_url = wp_get_attachment_image_url( (int) $value, 'full' );
+
+			return $image_url ? array( $image_url ) : array();
+		}
+
+		if ( ! is_string( $value ) ) {
+			return $urls;
+		}
+
+		$urls = $this->find_images_in_content( $value );
+		$value = trim( $value );
+
+		if ( $this->is_probable_image_url( $value ) ) {
+			$urls[] = $value;
+		}
+
+		return array_values( array_unique( $urls ) );
+	}
+
+	/**
+	 * Determine whether a standalone field value appears to be an image URL.
+	 *
+	 * @param string $value Field value.
+	 * @return bool
+	 */
+	private function is_probable_image_url( $value ) {
+		if ( ! $this->is_checkable_image_reference( $value ) ) {
+			return false;
+		}
+
+		return (bool) preg_match( '/\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)(?:[?#].*)?$/i', $value );
 	}
 
 	/**
@@ -1333,6 +1501,14 @@ class Kreativ_Broken_Image_Finder {
 			return __( 'Media Library file', 'kreativ-broken-image-finder' );
 		}
 
+		if ( 'excerpt' === $source ) {
+			return __( 'Excerpt', 'kreativ-broken-image-finder' );
+		}
+
+		if ( 'custom_field' === $source ) {
+			return __( 'Custom field', 'kreativ-broken-image-finder' );
+		}
+
 		return __( 'Content', 'kreativ-broken-image-finder' );
 	}
 
@@ -1699,6 +1875,12 @@ class Kreativ_Broken_Image_Finder {
 					<option value="content" <?php selected( $source_filter, 'content' ); ?>>
 						<?php esc_html_e( 'Content Images', 'kreativ-broken-image-finder' ); ?>
 					</option>
+					<option value="excerpt" <?php selected( $source_filter, 'excerpt' ); ?>>
+						<?php esc_html_e( 'Excerpt Images', 'kreativ-broken-image-finder' ); ?>
+					</option>
+					<option value="custom_field" <?php selected( $source_filter, 'custom_field' ); ?>>
+						<?php esc_html_e( 'Custom Field Images', 'kreativ-broken-image-finder' ); ?>
+					</option>
 					<option value="featured" <?php selected( $source_filter, 'featured' ); ?>>
 						<?php esc_html_e( 'Featured Images', 'kreativ-broken-image-finder' ); ?>
 					</option>
@@ -1747,6 +1929,7 @@ class Kreativ_Broken_Image_Finder {
 							<th><?php esc_html_e( 'Post', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Post type', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Source', 'kreativ-broken-image-finder' ); ?></th>
+							<th><?php esc_html_e( 'Field', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Image URL', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Error', 'kreativ-broken-image-finder' ); ?></th>
@@ -1763,6 +1946,7 @@ class Kreativ_Broken_Image_Finder {
 								</td>
 								<td><?php echo esc_html( $row['post_type'] ); ?></td>
 								<td><?php echo esc_html( $this->get_source_label( $row['source'] ) ); ?></td>
+								<td><?php echo esc_html( isset( $row['field'] ) ? $row['field'] : '—' ); ?></td>
 								<td style="word-break: break-all;">
 									<?php if ( ! empty( $row['image_url'] ) ) : ?>
 										<a href="<?php echo esc_url( $row['image_url'] ); ?>" target="_blank" rel="noopener noreferrer">

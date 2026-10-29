@@ -8,7 +8,7 @@ Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Scan your WordPress site for broken images in post content and featured images directly from the admin dashboard.
+Scan your WordPress site for broken images in post content, excerpts, custom fields and featured images directly from the admin dashboard.
 
 == Description ==
 
@@ -17,7 +17,8 @@ Kreativ Broken Image Finder scans your posts, pages and custom post types for br
 Missing or broken images can negatively affect user experience and SEO. This plugin helps you quickly identify:
 
 * Images that return 404 or other HTTP errors
-* Broken image URLs inside post content
+* Broken image URLs inside post content, excerpts and custom fields
+* Image URLs and Media Library image IDs stored in custom field values, including nested ACF-style values
 * Broken featured images on posts and pages
 
 No external services, no tracking, no bloat - everything runs locally on your server using WordPress core functions.
@@ -26,7 +27,7 @@ No external services, no tracking, no bloat - everything runs locally on your se
 
 * Scan all public post types (posts, pages, custom post types)
 * Scan Media Library image files and generated sizes for missing local files
-* Detect broken images inside post content
+* Detect broken images inside post content, excerpts and custom fields
 * Detect images in `srcset`, lazy-load attributes and CSS `url(...)` references
 * Detect broken featured images
 * Cache repeated image URL checks during a scan for faster results
@@ -56,7 +57,7 @@ No. The plugin only detects and reports broken images. You can then edit the aff
 
 = How does the plugin detect broken images? =
 
-It scans `<img>` tags in post content and checks their `src` URLs using WordPress HTTP requests, with fallback handling for servers that do not respond properly to `HEAD`. It also checks featured image URLs.
+It scans image references in post content, excerpts and custom fields, including lazy-load attributes, `srcset`, CSS URLs and nested custom-field values. It checks URLs using WordPress HTTP requests, with fallback handling for servers that do not respond properly to `HEAD`. It also checks featured image URLs and Media Library file integrity.
 
 = Can I control missing featured image reporting? =
 
@@ -88,6 +89,8 @@ Adds expanded image detection, Media Library file checks, ignore rules, single-i
 = 1.3.0 =
 * Added detection for `srcset`, lazy-load image attributes, `<source>` images and CSS `url(...)` references.
 * Added Media Library integrity checks for missing original files and generated image sizes.
+* Added scanning for post excerpts and custom field values, including nested values and image attachment IDs.
+* Added field names to report rows and CSV exports so findings can be fixed at the source.
 * Added ignore rules for image URLs, domains, posts and media attachments.
 * Added per-item recheck actions in the report table.
 * Added CSV export for the current filtered report.

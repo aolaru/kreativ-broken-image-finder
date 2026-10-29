@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Kreativ Broken Image Finder 1.3.0\n"
 "Report-Msgid-Bugs-To: https://kreativfont.com/\n"
-"POT-Creation-Date: 2026-05-05 13:17+0300\n"
+"POT-Creation-Date: 2026-10-29 23:57+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,7 +18,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 
 #: kreativ-broken-image-finder.php:66 kreativ-broken-image-finder.php:67
-#: kreativ-broken-image-finder.php:1526
+#: kreativ-broken-image-finder.php:1702
 msgid "Kreativ Broken Image Finder"
 msgstr ""
 
@@ -30,267 +30,287 @@ msgstr ""
 msgid "You are not allowed to export these results."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:214
+#: kreativ-broken-image-finder.php:216
 msgid "You are not allowed to recheck these results."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:249
+#: kreativ-broken-image-finder.php:251
 msgid "You are not allowed to ignore these results."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:307
+#: kreativ-broken-image-finder.php:309
 msgid "Permission denied."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:371
+#: kreativ-broken-image-finder.php:373
 msgid "Invalid request."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:479
+#: kreativ-broken-image-finder.php:487
 msgid "No featured image set"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:536
+#: kreativ-broken-image-finder.php:644
 msgid "Original file is missing"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:555
+#: kreativ-broken-image-finder.php:663
 #, php-format
 msgid "Generated image size \"%s\" is missing"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:746
+#: kreativ-broken-image-finder.php:914
 #, php-format
 msgid "HTTP status %d"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1325
+#: kreativ-broken-image-finder.php:1493
 msgid "Featured image"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1329
+#: kreativ-broken-image-finder.php:1497
 msgid "Missing featured image"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1333
+#: kreativ-broken-image-finder.php:1501
 msgid "Media Library file"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1336
+#: kreativ-broken-image-finder.php:1505
+msgid "Excerpt"
+msgstr ""
+
+#: kreativ-broken-image-finder.php:1509
+msgid "Custom field"
+msgstr ""
+
+#: kreativ-broken-image-finder.php:1512
 msgid "Content"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1528
+#: kreativ-broken-image-finder.php:1704
 msgid ""
 "Scan your posts, pages, custom post types and Media Library image files. The "
 "scan runs in the background in small chunks to avoid timeouts."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1532
+#: kreativ-broken-image-finder.php:1708
 msgid "Scan completed. See the summary and report below."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1538
+#: kreativ-broken-image-finder.php:1714
 msgid "Settings saved."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1544
+#: kreativ-broken-image-finder.php:1720
 msgid "Item rechecked and report updated."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1550
+#: kreativ-broken-image-finder.php:1726
 msgid "Ignore rule added and matching results removed."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1556
+#: kreativ-broken-image-finder.php:1732
 msgid "Run Full Scan"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1567
+#: kreativ-broken-image-finder.php:1743
 msgid "Scan Settings"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1575
+#: kreativ-broken-image-finder.php:1751
 msgid "Missing featured image rule"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1580
+#: kreativ-broken-image-finder.php:1756
 msgid "Report missing featured images for all scanned post types"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1585
+#: kreativ-broken-image-finder.php:1761
 msgid "Do not report missing featured images"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1590
+#: kreativ-broken-image-finder.php:1766
 msgid "Report missing featured images only for selected post types"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1596
+#: kreativ-broken-image-finder.php:1772
 msgid "Post types for missing featured image reporting"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1606
+#: kreativ-broken-image-finder.php:1782
 msgid ""
 "These selections apply only when \"selected post types\" is chosen above."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1610
+#: kreativ-broken-image-finder.php:1786
 msgid "Ignored image URLs"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1613
+#: kreativ-broken-image-finder.php:1789
 msgid ""
 "One URL per line. Matching image URLs are skipped in future scans and hidden "
 "from the saved report."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1617
+#: kreativ-broken-image-finder.php:1793
 msgid "Ignored domains"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1620
+#: kreativ-broken-image-finder.php:1796
 msgid ""
 "One domain per line, such as cdn.example.com. The scanner skips image URLs "
 "from these domains."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1624
+#: kreativ-broken-image-finder.php:1800
 msgid "Ignored post or attachment IDs"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1627
+#: kreativ-broken-image-finder.php:1803
 msgid "One ID per line. Matching posts or media attachments are skipped."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1634
+#: kreativ-broken-image-finder.php:1810
 msgid "Save Settings"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1638
+#: kreativ-broken-image-finder.php:1814
 msgid "Last Scan Summary"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1642
+#: kreativ-broken-image-finder.php:1818
 msgid "Total items scanned"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1646
+#: kreativ-broken-image-finder.php:1822
 msgid "Images checked"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1650
+#: kreativ-broken-image-finder.php:1826
 msgid "Broken images found"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1663
+#: kreativ-broken-image-finder.php:1839
 msgid "Posts without featured image"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1667
+#: kreativ-broken-image-finder.php:1843
 msgid "Missing Media Library files"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1671
+#: kreativ-broken-image-finder.php:1847
 msgid "Scan time (seconds)"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1677
+#: kreativ-broken-image-finder.php:1853
 msgid "Broken Images & Missing Featured Images Report"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1684
+#: kreativ-broken-image-finder.php:1860
 msgid "All Post Types"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1698
+#: kreativ-broken-image-finder.php:1874
 msgid "All Sources"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1700
+#: kreativ-broken-image-finder.php:1876
 msgid "Content Images"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1703
+#: kreativ-broken-image-finder.php:1879
+msgid "Excerpt Images"
+msgstr ""
+
+#: kreativ-broken-image-finder.php:1882
+msgid "Custom Field Images"
+msgstr ""
+
+#: kreativ-broken-image-finder.php:1885
 msgid "Featured Images"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1706
+#: kreativ-broken-image-finder.php:1888
 msgid "Missing Featured Image"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1709
+#: kreativ-broken-image-finder.php:1891
 msgid "Media Library Files"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1714
+#: kreativ-broken-image-finder.php:1896
 msgid "All Status Codes"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1722
+#: kreativ-broken-image-finder.php:1904
 msgid "Apply Filters"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1738
+#: kreativ-broken-image-finder.php:1920
 msgid "Export CSV"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1742
+#: kreativ-broken-image-finder.php:1924
 msgid "No results found with current filters, or you have not run a scan yet."
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1747
+#: kreativ-broken-image-finder.php:1929
 msgid "Post"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1748
+#: kreativ-broken-image-finder.php:1930
 msgid "Post type"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1749
+#: kreativ-broken-image-finder.php:1931
 msgid "Source"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1750
+#: kreativ-broken-image-finder.php:1932
+msgid "Field"
+msgstr ""
+
+#: kreativ-broken-image-finder.php:1933
 msgid "Image URL"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1751
+#: kreativ-broken-image-finder.php:1934
 msgid "Status"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1752
+#: kreativ-broken-image-finder.php:1935
 msgid "Error"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1753
+#: kreativ-broken-image-finder.php:1936
 msgid "Actions"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1772
+#: kreativ-broken-image-finder.php:1956
 msgid "—"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1783
+#: kreativ-broken-image-finder.php:1967
 msgid "Recheck"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1792
+#: kreativ-broken-image-finder.php:1976
 msgid "Ignore URL"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1802
+#: kreativ-broken-image-finder.php:1986
 msgid "Ignore Domain"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1812
+#: kreativ-broken-image-finder.php:1996
 msgid "Ignore Item"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1824
+#: kreativ-broken-image-finder.php:2008
 msgid "items"
 msgstr ""
 
-#: kreativ-broken-image-finder.php:1856
+#: kreativ-broken-image-finder.php:2040
 msgid "Made with KREATIV — helping you keep your content fresh and healthy."
 msgstr ""
