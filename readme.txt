@@ -1,6 +1,6 @@
 === Kreativ Broken Image Finder ===
 Contributors: anolaru
-Tags: broken images, 404, seo, media, maintenance
+Tags: broken images, image scanner, custom fields, media library, 404
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
@@ -8,38 +8,29 @@ Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Scan your WordPress site for broken images in post content, excerpts, custom fields and featured images directly from the admin dashboard.
+Find broken image URLs and missing Media Library files in WordPress content, excerpts, custom fields and featured images.
 
 == Description ==
 
-Kreativ Broken Image Finder scans your posts, pages and custom post types for broken images and provides a clear report directly in your WordPress dashboard.
+Find image issues visitors see, then jump straight to the affected content. Kreativ Broken Image Finder scans posts, pages and public custom post types in background batches and reports exactly where each issue was found.
 
-Missing or broken images can negatively affect user experience and SEO. This plugin helps you quickly identify:
+* Scan post content, excerpts, custom fields and featured images
+* Find image URLs and Media Library image IDs in nested custom-field values, including ACF-style data
+* Identify missing Media Library originals and generated sizes
+* See the source, field name, URL and HTTP status for each finding
+* Filter, recheck, ignore and export the report as CSV
 
-* Images that return 404 or other HTTP errors
-* Broken image URLs inside post content, excerpts and custom fields
-* Image URLs and Media Library image IDs stored in custom field values, including nested ACF-style values
-* Broken featured images on posts and pages
-
-No external services, no tracking, no bloat - everything runs locally on your server using WordPress core functions.
+Everything runs on your WordPress site with core APIs: no external service, tracking or cookies.
 
 == Features ==
 
-* Scan all public post types (posts, pages, custom post types)
-* Scan Media Library image files and generated sizes for missing local files
-* Detect broken images inside post content, excerpts and custom fields
-* Detect images in `srcset`, lazy-load attributes and CSS `url(...)` references
-* Detect broken featured images
-* Cache repeated image URL checks during a scan for faster results
-* Optional missing featured image reporting by post type
-* Ignore specific image URLs, domains, posts or media attachments
-* Recheck a single affected item after fixing it
-* Export the current filtered report to CSV
-* WP-CLI support with `wp kbif scan`
-* Summary with items scanned, images/files checked, broken images found and scan time
-* Detailed report with direct links to edit affected posts
-* Supports relative and protocol-relative image URLs
-* Lightweight and GDPR-friendly (no cookies, no external API calls)
+* Scan posts, pages and public custom post types in background batches
+* Detect images in content, excerpts, custom fields, `srcset`, lazy-load attributes, `<source>` elements and CSS `url(...)` references
+* Check featured images and Media Library originals and generated sizes
+* Inspect nested custom-field values and attachment IDs
+* Filter by post type, source and status; recheck or ignore individual findings
+* Export filtered results to CSV and scan from WP-CLI with `wp kbif scan`
+* Use relative and protocol-relative URLs with no external services or tracking
 
 == Installation ==
 
@@ -77,7 +68,9 @@ The scan runs only when manually triggered from the admin dashboard and does not
 
 == Screenshots ==
 
-1. Admin page showing the scan summary and broken images report.
+1. Run a scan and configure featured-image and ignore rules.
+2. Review broken image findings from post content and excerpts.
+3. Filter findings to custom fields, including the exact field name.
 
 == Upgrade Notice ==
 
