@@ -122,12 +122,16 @@ class Kreativ_Broken_Image_Finder {
 		$mode = isset( $_POST['kbif_missing_featured_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['kbif_missing_featured_mode'] ) ) : 'all';
 		$mode = in_array( $mode, array( 'all', 'none', 'selected' ), true ) ? $mode : 'all';
 
-		$post_types = isset( $_POST['kbif_missing_featured_post_types'] ) ? (array) wp_unslash( $_POST['kbif_missing_featured_post_types'] ) : array();
-		$post_types = array_map( 'sanitize_key', $post_types );
+		$post_types = isset( $_POST['kbif_missing_featured_post_types'] ) && is_array( $_POST['kbif_missing_featured_post_types'] )
+			? array_map( 'sanitize_key', wp_unslash( $_POST['kbif_missing_featured_post_types'] ) )
+			: array();
 		$post_types = array_values( array_intersect( $post_types, $this->get_scannable_post_types() ) );
 
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_textarea_list() validates each URL with esc_url_raw().
 		$ignored_urls    = $this->sanitize_textarea_list( isset( $_POST['kbif_ignored_urls'] ) ? wp_unslash( $_POST['kbif_ignored_urls'] ) : '' );
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_domain_list() normalizes and validates each domain.
 		$ignored_domains = $this->sanitize_domain_list( isset( $_POST['kbif_ignored_domains'] ) ? wp_unslash( $_POST['kbif_ignored_domains'] ) : '' );
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_id_list() validates each ID with absint().
 		$ignored_posts   = $this->sanitize_id_list( isset( $_POST['kbif_ignored_post_ids'] ) ? wp_unslash( $_POST['kbif_ignored_post_ids'] ) : '' );
 
 		update_option(
@@ -204,7 +208,6 @@ class Kreativ_Broken_Image_Finder {
 			);
 		}
 
-		fclose( $output );
 		exit;
 	}
 
