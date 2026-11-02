@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1544" height="500" viewBox="0 0 1544 500">
+  <rect width="1544" height="500" fill="#123a40"/>
+  <path d="M0 0h16v500H0z" fill="#75c5b6"/>
+  <path d="M1040 0h504v500h-504z" fill="#19474b"/>
+  <path d="M1080 0v500m112-500v500m112-500v500m112-500v500M1040 90h504m-504 112h504m-504 112h504m-504 112h504" stroke="#ffffff" stroke-opacity=".05"/>
+  <text x="84" y="101" fill="#75c5b6" font-family="Helvetica,Arial,sans-serif" font-size="20" font-weight="700" letter-spacing="4">KREATIV WORDPRESS PLUGINS</text>
+  <text x="80" y="205" fill="#f4f2e9" font-family="Helvetica,Arial,sans-serif" font-size="64" font-weight="700" letter-spacing="-2">Broken Image</text>
+  <text x="80" y="279" fill="#f4f2e9" font-family="Helvetica,Arial,sans-serif" font-size="64" font-weight="700" letter-spacing="-2">Finder</text>
+  <path d="M84 319h56" stroke="#f1745e" stroke-width="6" stroke-linecap="round"/>
+  <text x="84" y="371" fill="#c9dfda" font-family="Helvetica,Arial,sans-serif" font-size="25">Find missing images. Fix them faster.</text>
+  <text x="84" y="408" fill="#91b6ae" font-family="Helvetica,Arial,sans-serif" font-size="19">Content  /  Custom fields  /  Media Library</text>
+  <rect x="1121" y="98" width="235" height="202" rx="22" fill="none" stroke="#f4f2e9" stroke-width="12"/>
+  <circle cx="1192" cy="158" r="16" fill="#75c5b6"/>
+  <path d="M1138 269l58-59 38 37 32-35 55 55" fill="none" stroke="#75c5b6" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="1338" cy="285" r="61" fill="#19474b" stroke="#f4f2e9" stroke-width="12"/>
+  <path d="M1382 330l42 42" stroke="#f4f2e9" stroke-width="16" stroke-linecap="round"/>
+  <path d="M1338 252v38m0 25v1" stroke="#f1745e" stroke-width="12" stroke-linecap="round"/>
+</svg>
