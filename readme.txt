@@ -4,7 +4,7 @@ Tags: broken images, image scanner, custom fields, media library, 404
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -19,8 +19,10 @@ Find image issues visitors see, then jump straight to the affected content. Krea
 * Identify missing Media Library originals and generated sizes
 * See the source, field name, URL and HTTP status for each finding
 * Filter, recheck, ignore and export the report as CSV
+* Distinguish URLs reported missing from checks that need verification
+* Repair missing or broken featured images with a local title-card preview
 
-Everything runs on your WordPress site with core APIs: no external service, tracking or cookies.
+Scanning runs on your WordPress site with core APIs: no external service, tracking or cookies. Optional OpenAI image generation is used only when explicitly enabled for featured-image repairs.
 
 == Features ==
 
@@ -31,24 +33,38 @@ Everything runs on your WordPress site with core APIs: no external service, trac
 * Filter by post type, source and status; recheck or ignore individual findings
 * Export filtered results to CSV and scan from WP-CLI with `wp kbif scan`
 * Use relative and protocol-relative URLs with no external services or tracking
+* Create a local SVG title-card preview to repair a missing or broken featured image
+* Optionally generate an OpenAI artwork preview, then accept or discard it before changing the featured image
 
 == Installation ==
 
 1. Upload the plugin ZIP via *Plugins -> Add New -> Upload Plugin*.
 2. Activate **Kreativ Broken Image Finder**.
 3. Go to **Kreativ Broken Image Finder** in the WordPress admin menu.
-4. Optionally configure the missing featured image rule for your post types.
+4. Optionally configure the missing featured image rule and feature-image repair mode.
 5. Click **Run Full Scan** and wait for the results.
 
 == Frequently Asked Questions ==
 
 = Does this plugin automatically fix broken images? =
 
-No. The plugin only detects and reports broken images. You can then edit the affected posts and fix or replace the image URLs.
+No. The plugin never changes content automatically. For featured-image findings, it can create a local title-card or optional AI preview in the post editor. An editor must explicitly accept that preview before it replaces or adds the featured image.
+
+= How does featured-image repair work? =
+
+Open the affected item with the "Repair featured image" action. The editor sidebar includes a Feature Image Repair box that creates a pending preview from the post title and optional excerpt. Local template mode is the default and does not use AI or an API key. OpenAI mode is optional and requires an API key, either in the plugin settings or as `KBIF_OPENAI_API_KEY` in `wp-config.php` or the server environment.
 
 = How does the plugin detect broken images? =
 
 It scans image references in post content, excerpts and custom fields, including lazy-load attributes, `srcset`, CSS URLs and nested custom-field values. It checks URLs using WordPress HTTP requests, with fallback handling for servers that do not respond properly to `HEAD`. It also checks featured image URLs and Media Library file integrity.
+
+= What do the finding labels mean? =
+
+"URL reported missing" means the server returned 404 or 410. "Needs verification" means a request failed or returned another error, such as a timeout or access denial; it does not prove the image is missing. Open the URL and recheck before making changes. "Missing local file" means a Media Library file was not found on the server. A missing featured image means no featured image is set, not that a file is broken.
+
+= How do I fix an image in a custom field? =
+
+Open the affected item from the report and locate the named field in its editor or the plugin that manages it. For example, an imported `legacy_content` field or an ACF-style field may contain an image URL or attachment ID. Correct the value, save the item, then use Recheck. The scanner does not modify field values. Images generated only by themes, external services, or unsupported locations may not be found.
 
 = Can I control missing featured image reporting? =
 
@@ -60,7 +76,7 @@ Yes. You can run a full scan from the command line with `wp kbif scan`. You can 
 
 = Does it use any external services or APIs? =
 
-No. All checks are performed locally using WordPress core HTTP functions.
+Image checks use WordPress core HTTP functions. Featured-image repair uses no external service in local template mode. OpenAI is contacted only when an administrator selects OpenAI artwork mode and generates a preview.
 
 = Will it slow down my site? =
 
@@ -74,10 +90,28 @@ The scan runs only when manually triggered from the admin dashboard and does not
 
 == Upgrade Notice ==
 
+= 1.4.0 =
+Adds preview-first featured-image repair with local title-card templates and optional OpenAI artwork.
+
+= 1.3.1 =
+Clarifies missing and unverified findings and adds scan and repair guidance.
+
 = 1.3.0 =
 Adds expanded image detection, Media Library file checks, ignore rules, single-item recheck actions, and CSV export.
 
 == Changelog ==
+
+= 1.4.0 =
+* Added a Feature Image Repair box to supported post editors.
+* Added pending preview, accept, regenerate and discard workflows for feature-image repairs.
+* Added local SVG title-card generation with configurable label, colors and image size.
+* Added optional OpenAI artwork generation with an environment-variable API-key override.
+* Added a repair shortcut to findings for post types that support featured images.
+
+= 1.3.1 =
+* Distinguish URLs reported missing, missing local files, missing featured images and checks needing verification in reports and CSV exports.
+* Add first-scan and source-specific repair guidance.
+* Avoid reporting a successful scan when saving results fails.
 
 = 1.3.0 =
 * Added detection for `srcset`, lazy-load image attributes, `<source>` images and CSS `url(...)` references.

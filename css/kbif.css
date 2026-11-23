@@ -34,3 +34,16 @@
 .kbif-actions form {
     margin: 0;
 }
+
+.kbif-guide {
+    max-width: 760px;
+    margin: 1em 0;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid #c3c4c7;
+}
+
+.kbif-guide summary {
+    cursor: pointer;
+    font-weight: 600;
+}

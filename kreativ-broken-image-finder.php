@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name:       Kreativ Broken Image Finder
- * Plugin URI:        https://kreativfont.com/tools/kreativ-broken-image-finder-wp-plugin
- * Description:       Scan your site for broken images in content, excerpts, custom fields, featured images and the Media Library, then review a report inside your dashboard.
- * Version:           1.3.0
+ * Plugin URI:        https://kreativwp.com/plugins/kreativ-broken-image-finder/
+ * Description:       Scan your site for broken images, then create preview-first repairs for missing or broken featured images.
+ * Version:           1.4.0
  * Author:            Andrei Olaru
- * Author URI:        https://kreativfont.com/
+ * Author URI:        https://kreativwp.com/
  * Text Domain:       kreativ-broken-image-finder
  * Domain Path:       /languages
  * License:           GPL-2.0-or-later
@@ -21,13 +21,17 @@ if ( ! class_exists( 'Kreativ_Broken_Image_Finder' ) ) :
 
 class Kreativ_Broken_Image_Finder {
 
-	const VERSION         = '1.3.0';
+	const VERSION         = '1.4.0';
 	const OPTION_RESULTS  = 'kbif_last_scan_results';
 	const OPTION_STATS    = 'kbif_last_scan_stats';
 	const OPTION_QUEUE    = 'kbif_scan_queue';
 	const OPTION_PROGRESS = 'kbif_scan_progress';
 	const OPTION_SETTINGS = 'kbif_settings';
 	const OPTION_URL_CACHE = 'kbif_scan_url_cache';
+	const META_PENDING_IMAGE_ID = '_kbif_pending_feature_image_id';
+	const META_LAST_PROMPT      = '_kbif_last_feature_image_prompt';
+	const META_GENERATION_STATE = '_kbif_feature_image_generation_in_progress';
+	const API_KEY_NAME          = 'KBIF_OPENAI_API_KEY';
 
 	/**
 	 * Per-request cache of URL checks for the active scan.
@@ -53,7 +57,27 @@ class Kreativ_Broken_Image_Finder {
 		add_action( 'admin_post_kbif_export_csv', array( $this, 'handle_export_csv' ) );
 		add_action( 'admin_post_kbif_recheck_post', array( $this, 'handle_recheck_post' ) );
 		add_action( 'admin_post_kbif_ignore_result', array( $this, 'handle_ignore_result' ) );
+		add_action( 'add_meta_boxes', array( $this, 'register_feature_image_meta_box' ) );
+		add_action( 'admin_post_kbif_generate_feature_image', array( $this, 'handle_generate_feature_image' ) );
+		add_action( 'admin_post_kbif_accept_feature_image', array( $this, 'handle_accept_feature_image' ) );
+		add_action( 'admin_post_kbif_discard_feature_image', array( $this, 'handle_discard_feature_image' ) );
+		add_action( 'admin_notices', array( $this, 'render_feature_image_notice' ) );
 		add_action( 'wp_ajax_kbif_scan_step', array( $this, 'ajax_scan_step' ) );
+	}
+
+	/**
+	 * Render generation feedback after returning to the post editor.
+	 */
+	public function render_feature_image_notice() {
+		if ( empty( $_GET['kbif_status'] ) || empty( $_GET['kbif_message'] ) ) {
+			return;
+		}
+
+		$status  = sanitize_key( wp_unslash( $_GET['kbif_status'] ) );
+		$message = sanitize_text_field( wp_unslash( $_GET['kbif_message'] ) );
+		$class   = 'success' === $status ? 'notice notice-success is-dismissible' : 'notice notice-error is-dismissible';
+
+		printf( '<div class="%1$s"><p>%2$s</p></div>', esc_attr( $class ), esc_html( $message ) );
 	}
 
 	/**
@@ -133,6 +157,10 @@ class Kreativ_Broken_Image_Finder {
 		$ignored_domains = $this->sanitize_domain_list( isset( $_POST['kbif_ignored_domains'] ) ? wp_unslash( $_POST['kbif_ignored_domains'] ) : '' );
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitize_id_list() validates each ID with absint().
 		$ignored_posts   = $this->sanitize_id_list( isset( $_POST['kbif_ignored_post_ids'] ) ? wp_unslash( $_POST['kbif_ignored_post_ids'] ) : '' );
+		$feature_mode    = isset( $_POST['kbif_feature_generation_mode'] ) ? sanitize_key( wp_unslash( $_POST['kbif_feature_generation_mode'] ) ) : 'template';
+		$feature_size    = isset( $_POST['kbif_feature_image_size'] ) ? sanitize_text_field( wp_unslash( $_POST['kbif_feature_image_size'] ) ) : '1536x1024';
+		$feature_primary = isset( $_POST['kbif_feature_template_primary_color'] ) ? sanitize_hex_color( wp_unslash( $_POST['kbif_feature_template_primary_color'] ) ) : '';
+		$feature_accent  = isset( $_POST['kbif_feature_template_accent_color'] ) ? sanitize_hex_color( wp_unslash( $_POST['kbif_feature_template_accent_color'] ) ) : '';
 
 		update_option(
 			self::OPTION_SETTINGS,
@@ -142,6 +170,15 @@ class Kreativ_Broken_Image_Finder {
 				'ignored_urls'                => $ignored_urls,
 				'ignored_domains'             => $ignored_domains,
 				'ignored_post_ids'            => $ignored_posts,
+				'feature_generation_mode'     => in_array( $feature_mode, array( 'ai', 'template' ), true ) ? $feature_mode : 'template',
+				'feature_api_key'             => isset( $_POST['kbif_feature_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['kbif_feature_api_key'] ) ) : '',
+				'feature_model'               => isset( $_POST['kbif_feature_model'] ) ? sanitize_text_field( wp_unslash( $_POST['kbif_feature_model'] ) ) : 'gpt-image-1',
+				'feature_image_size'          => in_array( $feature_size, array( '1024x1024', '1536x1024', '1024x1536' ), true ) ? $feature_size : '1536x1024',
+				'feature_image_style'         => isset( $_POST['kbif_feature_image_style'] ) ? sanitize_text_field( wp_unslash( $_POST['kbif_feature_image_style'] ) ) : '',
+				'feature_prompt_suffix'       => isset( $_POST['kbif_feature_prompt_suffix'] ) ? sanitize_textarea_field( wp_unslash( $_POST['kbif_feature_prompt_suffix'] ) ) : '',
+				'feature_template_label'      => isset( $_POST['kbif_feature_template_label'] ) ? sanitize_text_field( wp_unslash( $_POST['kbif_feature_template_label'] ) ) : '',
+				'feature_template_primary_color' => $feature_primary ? $feature_primary : '#102A43',
+				'feature_template_accent_color'  => $feature_accent ? $feature_accent : '#00A6A6',
 			)
 		);
 
@@ -188,6 +225,7 @@ class Kreativ_Broken_Image_Finder {
 				'Image URL',
 				'Status Code',
 				'Error',
+				'Finding',
 			)
 		);
 
@@ -204,6 +242,7 @@ class Kreativ_Broken_Image_Finder {
 					isset( $row['image_url'] ) ? $row['image_url'] : '',
 					isset( $row['status_code'] ) ? $row['status_code'] : '',
 					isset( $row['error'] ) ? $row['error'] : '',
+					$this->get_finding_label( $row ),
 				)
 			);
 		}
@@ -374,6 +413,199 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		wp_send_json_error( __( 'Invalid request.', 'kreativ-broken-image-finder' ) );
+	}
+
+	/**
+	 * Add the feature-image repair tool to post editors.
+	 */
+	public function register_feature_image_meta_box() {
+		foreach ( $this->get_scannable_post_types() as $post_type ) {
+			if ( ! post_type_supports( $post_type, 'thumbnail' ) ) {
+				continue;
+			}
+
+			add_meta_box(
+				'kbif-feature-image-repair',
+				__( 'Feature Image Repair', 'kreativ-broken-image-finder' ),
+				array( $this, 'render_feature_image_meta_box' ),
+				$post_type,
+				'side',
+				'high'
+			);
+		}
+	}
+
+	/**
+	 * Render the feature-image repair controls.
+	 *
+	 * @param WP_Post $post Current post.
+	 */
+	public function render_feature_image_meta_box( $post ) {
+		if ( ! current_user_can( 'edit_post', $post->ID ) ) {
+			return;
+		}
+
+		$settings         = $this->get_settings();
+		$is_template_mode = 'template' === $settings['feature_generation_mode'];
+		$pending_image_id = (int) get_post_meta( $post->ID, self::META_PENDING_IMAGE_ID, true );
+		$last_prompt      = get_post_meta( $post->ID, self::META_LAST_PROMPT, true );
+		$admin_post_url   = admin_url( 'admin-post.php' );
+		?>
+		<p><?php echo esc_html( $is_template_mode ? __( 'Create a local title-card preview to repair or add a featured image. No AI or API key is used.', 'kreativ-broken-image-finder' ) : __( 'Create an AI artwork preview to repair or replace the featured image.', 'kreativ-broken-image-finder' ) ); ?></p>
+		<form method="post" action="<?php echo esc_url( $admin_post_url ); ?>">
+			<input type="hidden" name="action" value="kbif_generate_feature_image" />
+			<input type="hidden" name="post_id" value="<?php echo esc_attr( $post->ID ); ?>" />
+			<?php
+			wp_nonce_field( 'kbif_generate_feature_image_' . $post->ID );
+			submit_button(
+				$pending_image_id ? __( 'Regenerate Preview', 'kreativ-broken-image-finder' ) : ( $is_template_mode ? __( 'Generate Template Preview', 'kreativ-broken-image-finder' ) : __( 'Generate AI Preview', 'kreativ-broken-image-finder' ) ),
+				'primary',
+				'submit',
+				false
+			);
+			?>
+		</form>
+		<?php if ( $pending_image_id ) : ?>
+			<p><strong><?php esc_html_e( 'Pending preview', 'kreativ-broken-image-finder' ); ?></strong></p>
+			<p>
+				<?php
+				$preview = wp_get_attachment_image( $pending_image_id, 'medium', false, array( 'style' => 'width:100%;height:auto;' ) );
+				if ( $preview ) {
+					echo wp_kses_post( $preview );
+				} else {
+					$preview_url = wp_get_attachment_url( $pending_image_id );
+					if ( $preview_url ) {
+						echo '<img src="' . esc_url( $preview_url ) . '" alt="" style="width:100%;height:auto;" />';
+					}
+				}
+				?>
+			</p>
+			<div class="kbif-feature-preview-actions">
+				<form method="post" action="<?php echo esc_url( $admin_post_url ); ?>" style="display:inline-block;margin-right:4px;">
+					<input type="hidden" name="action" value="kbif_accept_feature_image" />
+					<input type="hidden" name="post_id" value="<?php echo esc_attr( $post->ID ); ?>" />
+					<?php wp_nonce_field( 'kbif_accept_feature_image_' . $post->ID ); ?>
+					<?php submit_button( __( 'Accept Preview', 'kreativ-broken-image-finder' ), 'primary', 'submit', false ); ?>
+				</form>
+				<form method="post" action="<?php echo esc_url( $admin_post_url ); ?>" style="display:inline-block;">
+					<input type="hidden" name="action" value="kbif_discard_feature_image" />
+					<input type="hidden" name="post_id" value="<?php echo esc_attr( $post->ID ); ?>" />
+					<?php wp_nonce_field( 'kbif_discard_feature_image_' . $post->ID ); ?>
+					<?php submit_button( __( 'Discard Preview', 'kreativ-broken-image-finder' ), 'secondary', 'submit', false ); ?>
+				</form>
+			</div>
+		<?php endif; ?>
+		<?php if ( $last_prompt ) : ?>
+			<p><strong><?php esc_html_e( 'Last AI prompt:', 'kreativ-broken-image-finder' ); ?></strong></p>
+			<p style="white-space:pre-wrap;"><?php echo esc_html( $last_prompt ); ?></p>
+		<?php endif; ?>
+		<?php
+	}
+
+	/**
+	 * Generate a pending replacement image.
+	 */
+	public function handle_generate_feature_image() {
+		$post_id = $this->get_feature_post_id_from_request();
+		check_admin_referer( 'kbif_generate_feature_image_' . $post_id );
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_die( esc_html__( 'You are not allowed to edit this post.', 'kreativ-broken-image-finder' ) );
+		}
+
+		$result = $this->generate_feature_image_preview( $post_id );
+		$this->redirect_to_feature_post_editor( $post_id, $result, __( 'Preview image generated. Review it before accepting.', 'kreativ-broken-image-finder' ) );
+	}
+
+	/**
+	 * Accept a pending replacement image.
+	 */
+	public function handle_accept_feature_image() {
+		$post_id = $this->get_feature_post_id_from_request();
+		check_admin_referer( 'kbif_accept_feature_image_' . $post_id );
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_die( esc_html__( 'You are not allowed to edit this post.', 'kreativ-broken-image-finder' ) );
+		}
+
+		$pending_image_id = (int) get_post_meta( $post_id, self::META_PENDING_IMAGE_ID, true );
+		$result           = $pending_image_id ? set_post_thumbnail( $post_id, $pending_image_id ) : false;
+		if ( ! $result ) {
+			$result = new WP_Error( 'kbif_missing_preview', __( 'There is no pending preview to accept.', 'kreativ-broken-image-finder' ) );
+		} else {
+			delete_post_meta( $post_id, self::META_PENDING_IMAGE_ID );
+			$this->refresh_findings_for_post( $post_id );
+		}
+
+		$this->redirect_to_feature_post_editor( $post_id, $result, __( 'Preview accepted and set as featured image.', 'kreativ-broken-image-finder' ) );
+	}
+
+	/**
+	 * Delete a pending replacement image.
+	 */
+	public function handle_discard_feature_image() {
+		$post_id = $this->get_feature_post_id_from_request();
+		check_admin_referer( 'kbif_discard_feature_image_' . $post_id );
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_die( esc_html__( 'You are not allowed to edit this post.', 'kreativ-broken-image-finder' ) );
+		}
+
+		$pending_image_id = (int) get_post_meta( $post_id, self::META_PENDING_IMAGE_ID, true );
+		$result           = $pending_image_id ? wp_delete_attachment( $pending_image_id, true ) : false;
+		if ( ! $result ) {
+			$result = new WP_Error( 'kbif_missing_preview', __( 'There is no pending preview to discard.', 'kreativ-broken-image-finder' ) );
+		} else {
+			delete_post_meta( $post_id, self::META_PENDING_IMAGE_ID );
+		}
+
+		$this->redirect_to_feature_post_editor( $post_id, $result, __( 'Pending preview discarded.', 'kreativ-broken-image-finder' ) );
+	}
+
+	/**
+	 * Generate a pending feature-image attachment.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return int|WP_Error
+	 */
+	private function generate_feature_image_preview( $post_id ) {
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error( 'kbif_missing_post', __( 'Post not found.', 'kreativ-broken-image-finder' ) );
+		}
+		if ( ! in_array( $post->post_type, $this->get_scannable_post_types(), true ) || ! post_type_supports( $post->post_type, 'thumbnail' ) ) {
+			return new WP_Error( 'kbif_unsupported_post_type', __( 'This post type does not support featured-image repair.', 'kreativ-broken-image-finder' ) );
+		}
+
+		$settings         = $this->get_settings();
+		$is_template_mode = 'template' === $settings['feature_generation_mode'];
+		if ( ! $is_template_mode && '' === $this->get_feature_api_key( $settings ) ) {
+			return new WP_Error( 'kbif_missing_api_key', __( 'OpenAI API key is not configured.', 'kreativ-broken-image-finder' ) );
+		}
+
+		if ( $this->is_feature_generation_locked( $post_id ) || ! $this->lock_feature_generation( $post_id ) ) {
+			return new WP_Error( 'kbif_generation_locked', __( 'Feature image generation is already in progress for this post. Please wait before trying again.', 'kreativ-broken-image-finder' ) );
+		}
+
+		if ( $is_template_mode ) {
+			delete_post_meta( $post_id, self::META_LAST_PROMPT );
+			$attachment_id = $this->create_feature_template_attachment( $post, $settings );
+		} else {
+			$prompt = $this->build_feature_prompt( $post, $settings );
+			update_post_meta( $post_id, self::META_LAST_PROMPT, $prompt );
+			$image_bytes = $this->request_feature_image_from_openai( $prompt, $settings );
+			$attachment_id = is_wp_error( $image_bytes ) ? $image_bytes : $this->create_feature_image_attachment( $image_bytes, $post_id, $post->post_title );
+		}
+
+		if ( is_wp_error( $attachment_id ) ) {
+			$this->unlock_feature_generation( $post_id );
+			return $attachment_id;
+		}
+
+		$this->replace_pending_feature_image( $post_id, $attachment_id );
+		$this->unlock_feature_generation( $post_id );
+
+		return $attachment_id;
 	}
 
 	/**
@@ -1060,6 +1292,15 @@ class Kreativ_Broken_Image_Finder {
 			'ignored_urls'                => array(),
 			'ignored_domains'             => array(),
 			'ignored_post_ids'            => array(),
+			'feature_generation_mode'     => 'template',
+			'feature_api_key'             => '',
+			'feature_model'               => 'gpt-image-1',
+			'feature_image_size'          => '1536x1024',
+			'feature_image_style'         => 'Editorial illustration, clean composition, modern magazine style',
+			'feature_prompt_suffix'       => '',
+			'feature_template_label'      => '',
+			'feature_template_primary_color' => '#102A43',
+			'feature_template_accent_color'  => '#00A6A6',
 		);
 
 		$settings = get_option( self::OPTION_SETTINGS, array() );
@@ -1074,9 +1315,339 @@ class Kreativ_Broken_Image_Finder {
 		$settings['ignored_urls']       = array_values( array_unique( array_filter( array_map( 'esc_url_raw', (array) $settings['ignored_urls'] ) ) ) );
 		$settings['ignored_domains']    = array_values( array_unique( array_filter( array_map( array( $this, 'normalize_domain' ), (array) $settings['ignored_domains'] ) ) ) );
 		$settings['ignored_post_ids']   = array_values( array_unique( array_filter( array_map( 'absint', (array) $settings['ignored_post_ids'] ) ) ) );
+		$settings['feature_generation_mode'] = in_array( $settings['feature_generation_mode'], array( 'ai', 'template' ), true ) ? $settings['feature_generation_mode'] : 'template';
+		$settings['feature_image_size'] = in_array( $settings['feature_image_size'], array( '1024x1024', '1536x1024', '1024x1536' ), true ) ? $settings['feature_image_size'] : '1536x1024';
+		$settings['feature_template_primary_color'] = sanitize_hex_color( $settings['feature_template_primary_color'] ) ? sanitize_hex_color( $settings['feature_template_primary_color'] ) : '#102A43';
+		$settings['feature_template_accent_color']  = sanitize_hex_color( $settings['feature_template_accent_color'] ) ? sanitize_hex_color( $settings['feature_template_accent_color'] ) : '#00A6A6';
 
 		return $settings;
 	}
+
+	/**
+	 * Request image bytes from OpenAI's image generation API.
+	 *
+	 * @param string $prompt Generated prompt.
+	 * @param array  $settings Plugin settings.
+	 * @return string|WP_Error
+	 */
+	private function request_feature_image_from_openai( $prompt, $settings ) {
+		$response = wp_remote_post(
+			'https://api.openai.com/v1/images/generations',
+			array(
+				'timeout' => 90,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $this->get_feature_api_key( $settings ),
+					'Content-Type'  => 'application/json',
+				),
+				'body'    => wp_json_encode(
+					array(
+						'model'  => $settings['feature_model'],
+						'size'   => $settings['feature_image_size'],
+						'prompt' => $prompt,
+					)
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$status_code = wp_remote_retrieve_response_code( $response );
+		$body        = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( 200 !== $status_code ) {
+			$message = ! empty( $body['error']['message'] ) ? $body['error']['message'] : __( 'Image generation request failed.', 'kreativ-broken-image-finder' );
+			return new WP_Error( 'kbif_generation_failed', $message );
+		}
+
+		if ( empty( $body['data'][0]['b64_json'] ) ) {
+			return new WP_Error( 'kbif_missing_image_data', __( 'The image API did not return image data.', 'kreativ-broken-image-finder' ) );
+		}
+
+		$image_bytes = base64_decode( $body['data'][0]['b64_json'], true );
+		return false === $image_bytes ? new WP_Error( 'kbif_invalid_image_data', __( 'Could not decode image data returned by the API.', 'kreativ-broken-image-finder' ) ) : $image_bytes;
+	}
+
+	/**
+	 * Create an attachment from AI image bytes.
+	 *
+	 * @param string $image_bytes Image bytes.
+	 * @param int    $post_id Post ID.
+	 * @param string $post_title Post title.
+	 * @return int|WP_Error
+	 */
+	private function create_feature_image_attachment( $image_bytes, $post_id, $post_title ) {
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+
+		$upload = wp_upload_bits( sanitize_title( $post_title ) . '-featured.png', null, $image_bytes );
+		if ( ! empty( $upload['error'] ) ) {
+			return new WP_Error( 'kbif_upload_failed', $upload['error'] );
+		}
+
+		$filetype = wp_check_filetype( $upload['file'] );
+		$attachment_id = wp_insert_attachment(
+			array(
+				'post_mime_type' => $filetype['type'],
+				'post_title'     => sanitize_text_field( $post_title . ' Featured Image' ),
+				'post_status'    => 'inherit',
+			),
+			$upload['file'],
+			$post_id
+		);
+		if ( is_wp_error( $attachment_id ) ) {
+			return $attachment_id;
+		}
+
+		wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $upload['file'] ) );
+
+		return $attachment_id;
+	}
+
+	/**
+	 * Create an SVG title-card attachment without external generation.
+	 *
+	 * @param WP_Post $post Post to illustrate.
+	 * @param array   $settings Plugin settings.
+	 * @return int|WP_Error
+	 */
+	private function create_feature_template_attachment( $post, $settings ) {
+		$template = $this->build_feature_template( $post, $settings );
+		$upload   = wp_upload_bits( sanitize_title( $post->post_title ) . '-featured-template.svg', null, $template['svg'] );
+		if ( ! empty( $upload['error'] ) ) {
+			return new WP_Error( 'kbif_upload_failed', $upload['error'] );
+		}
+
+		$attachment_id = wp_insert_attachment(
+			array(
+				'post_mime_type' => 'image/svg+xml',
+				'post_title'     => sanitize_text_field( $post->post_title . ' Featured Template' ),
+				'post_status'    => 'inherit',
+			),
+			$upload['file'],
+			$post->ID
+		);
+		if ( is_wp_error( $attachment_id ) ) {
+			return $attachment_id;
+		}
+
+		wp_update_attachment_metadata(
+			$attachment_id,
+			array(
+				'width'  => $template['width'],
+				'height' => $template['height'],
+				'file'   => _wp_relative_upload_path( $upload['file'] ),
+			)
+		);
+
+		return $attachment_id;
+	}
+
+	/**
+	 * Build a local title-card SVG.
+	 *
+	 * @param WP_Post $post Post to illustrate.
+	 * @param array   $settings Plugin settings.
+	 * @return array
+	 */
+	private function build_feature_template( $post, $settings ) {
+		$dimensions = $this->get_feature_template_dimensions( $settings['feature_image_size'] );
+		$width      = $dimensions['width'];
+		$height     = $dimensions['height'];
+		$title      = $this->get_feature_template_text( $post->post_title, 96 );
+		$title      = $title ? $title : __( 'Untitled post', 'kreativ-broken-image-finder' );
+		$excerpt    = has_excerpt( $post ) ? $this->get_feature_template_text( $post->post_excerpt, 180 ) : '';
+		$label      = ! empty( $settings['feature_template_label'] ) ? $settings['feature_template_label'] : get_bloginfo( 'name' );
+		$primary    = $settings['feature_template_primary_color'];
+		$accent     = $settings['feature_template_accent_color'];
+		$title_size = $width >= $height ? 78 : 66;
+		$title_y    = $height >= $width ? 310 : 270;
+		$title_lines = $this->wrap_feature_template_text( $title, 27, 4 );
+		$excerpt_y  = $title_y + ( count( $title_lines ) * ( $title_size + 18 ) ) + 54;
+
+		$svg = sprintf(
+			'<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="%1$d" height="%2$d" viewBox="0 0 %1$d %2$d"><defs><linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop offset="0%%" stop-color="%3$s"/><stop offset="100%%" stop-color="%4$s"/></linearGradient><pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse"><path d="M 42 0 L 0 0 0 42" fill="none" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="1"/></pattern></defs><rect width="100%%" height="100%%" fill="url(#background)"/><rect width="100%%" height="100%%" fill="url(#grid)"/><circle cx="%5$d" cy="%6$d" r="%7$d" fill="none" stroke="#FFFFFF" stroke-opacity="0.17" stroke-width="2"/><path d="M0 %8$d H%1$d" stroke="#FFFFFF" stroke-opacity="0.24" stroke-width="2"/><text x="96" y="112" fill="#FFFFFF" fill-opacity="0.78" font-family="Arial, sans-serif" font-size="25" font-weight="700" letter-spacing="3">%9$s</text><rect x="96" y="144" width="120" height="7" fill="%4$s"/>%10$s%11$s<text x="96" y="%12$d" fill="#FFFFFF" fill-opacity="0.64" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="2">FEATURE IMAGE</text></svg>',
+			$width,
+			$height,
+			$this->escape_feature_svg( $primary ),
+			$this->escape_feature_svg( $accent ),
+			(int) ( $width * 0.88 ),
+			(int) ( $height * 0.18 ),
+			(int) ( min( $width, $height ) * 0.32 ),
+			(int) ( $height * 0.79 ),
+			$this->escape_feature_svg( mb_strtoupper( $this->get_feature_template_text( $label, 60 ) ) ),
+			$this->render_feature_svg_lines( $title_lines, 96, $title_y, $title_size, $title_size + 18, '700' ),
+			$excerpt ? $this->render_feature_svg_lines( $this->wrap_feature_template_text( $excerpt, 56, 2 ), 100, $excerpt_y, 28, 40, '400', '#FFFFFF', '0.82' ) : '',
+			$height - 76
+		);
+
+		return array(
+			'svg'    => $svg,
+			'width'  => $width,
+			'height' => $height,
+		);
+	}
+
+	private function get_feature_template_dimensions( $image_size ) {
+		$dimensions = array(
+			'1024x1024' => array( 'width' => 1024, 'height' => 1024 ),
+			'1536x1024' => array( 'width' => 1536, 'height' => 1024 ),
+			'1024x1536' => array( 'width' => 1024, 'height' => 1536 ),
+		);
+
+		return isset( $dimensions[ $image_size ] ) ? $dimensions[ $image_size ] : $dimensions['1536x1024'];
+	}
+
+	private function get_feature_template_text( $text, $limit ) {
+		return mb_substr( trim( preg_replace( '/\s+/', ' ', wp_strip_all_tags( strip_shortcodes( $text ) ) ) ), 0, $limit );
+	}
+
+	private function wrap_feature_template_text( $text, $max_characters, $max_lines ) {
+		$words = preg_split( '/\s+/', trim( $text ) );
+		$lines = array();
+		$line  = '';
+		foreach ( $words as $word ) {
+			$candidate = '' === $line ? $word : $line . ' ' . $word;
+			if ( mb_strlen( $candidate ) <= $max_characters ) {
+				$line = $candidate;
+				continue;
+			}
+			if ( '' !== $line ) {
+				$lines[] = $line;
+			}
+			if ( count( $lines ) === $max_lines ) {
+				break;
+			}
+			$line = mb_substr( $word, 0, $max_characters );
+		}
+		if ( '' !== $line && count( $lines ) < $max_lines ) {
+			$lines[] = $line;
+		}
+
+		return $lines;
+	}
+
+	private function render_feature_svg_lines( $lines, $x, $y, $font_size, $line_height, $font_weight, $fill = '#FFFFFF', $opacity = '1' ) {
+		$svg = '';
+		foreach ( $lines as $index => $line ) {
+			$svg .= sprintf( '<text x="%1$d" y="%2$d" fill="%3$s" fill-opacity="%4$s" font-family="Arial, sans-serif" font-size="%5$d" font-weight="%6$s">%7$s</text>', $x, $y + ( $index * $line_height ), $this->escape_feature_svg( $fill ), $this->escape_feature_svg( $opacity ), $font_size, $this->escape_feature_svg( $font_weight ), $this->escape_feature_svg( $line ) );
+		}
+
+		return $svg;
+	}
+
+	private function escape_feature_svg( $text ) {
+		return htmlspecialchars( (string) $text, ENT_XML1 | ENT_COMPAT, 'UTF-8' );
+	}
+
+	private function build_feature_prompt( $post, $settings ) {
+		$title   = $this->get_feature_template_text( $post->post_title, 200 );
+		$excerpt = has_excerpt( $post ) ? $this->get_feature_template_text( $post->post_excerpt, 400 ) : '';
+		$content = $this->get_feature_template_text( $post->post_content, 900 );
+		$style   = ! empty( $settings['feature_image_style'] ) ? $settings['feature_image_style'] : 'Editorial illustration, clean composition, modern magazine style';
+		$parts   = array(
+			'Create a high-quality article featured image.',
+			'Title: ' . $title . '.',
+			'Style: ' . $style . '.',
+			'Avoid text overlays, logos, watermarks, UI mockups, and split-screen layouts.',
+			'Use a strong focal point and editorial composition.',
+		);
+		if ( $excerpt ) {
+			$parts[] = 'Excerpt: ' . $excerpt . '.';
+		}
+		if ( $content ) {
+			$parts[] = 'Article summary: ' . $content . '.';
+		}
+		if ( ! empty( $settings['feature_prompt_suffix'] ) ) {
+			$parts[] = trim( $settings['feature_prompt_suffix'] );
+		}
+
+		return implode( ' ', $parts );
+	}
+
+	private function replace_pending_feature_image( $post_id, $attachment_id ) {
+		$existing = (int) get_post_meta( $post_id, self::META_PENDING_IMAGE_ID, true );
+		if ( $existing && $existing !== $attachment_id ) {
+			wp_delete_attachment( $existing, true );
+		}
+		update_post_meta( $post_id, self::META_PENDING_IMAGE_ID, $attachment_id );
+	}
+
+	private function get_feature_post_id_from_request() {
+		if ( empty( $_POST['post_id'] ) || is_array( $_POST['post_id'] ) ) {
+			wp_die( esc_html__( 'Missing post ID.', 'kreativ-broken-image-finder' ) );
+		}
+
+		return absint( wp_unslash( $_POST['post_id'] ) );
+	}
+
+	private function redirect_to_feature_post_editor( $post_id, $result, $success_message ) {
+		$url = add_query_arg(
+			array(
+				'post'           => $post_id,
+				'action'         => 'edit',
+				'kbif_status'    => is_wp_error( $result ) ? 'error' : 'success',
+				'kbif_message'   => is_wp_error( $result ) ? $result->get_error_message() : $success_message,
+			),
+			admin_url( 'post.php' )
+		);
+		wp_safe_redirect( $url );
+		exit;
+	}
+
+	private function lock_feature_generation( $post_id ) {
+		return add_post_meta( $post_id, self::META_GENERATION_STATE, time(), true );
+	}
+
+	private function unlock_feature_generation( $post_id ) {
+		delete_post_meta( $post_id, self::META_GENERATION_STATE );
+	}
+
+	private function is_feature_generation_locked( $post_id ) {
+		$lock_time = (int) get_post_meta( $post_id, self::META_GENERATION_STATE, true );
+		if ( ! $lock_time ) {
+			return false;
+		}
+		if ( $lock_time < ( time() - 300 ) ) {
+			$this->unlock_feature_generation( $post_id );
+			return false;
+		}
+
+		return true;
+	}
+
+	private function get_feature_api_key( $settings ) {
+		if ( defined( self::API_KEY_NAME ) && is_scalar( constant( self::API_KEY_NAME ) ) && '' !== trim( (string) constant( self::API_KEY_NAME ) ) ) {
+			return trim( (string) constant( self::API_KEY_NAME ) );
+		}
+		$environment_key = getenv( self::API_KEY_NAME );
+		if ( is_string( $environment_key ) && '' !== trim( $environment_key ) ) {
+			return trim( $environment_key );
+		}
+
+		return ! empty( $settings['feature_api_key'] ) ? trim( $settings['feature_api_key'] ) : '';
+	}
+
+	private function refresh_findings_for_post( $post_id ) {
+		$results = get_option( self::OPTION_RESULTS, array() );
+		$results = array_values(
+			array_filter(
+				$results,
+				function( $row ) use ( $post_id ) {
+					return empty( $row['post_id'] ) || (int) $row['post_id'] !== $post_id;
+				}
+			)
+		);
+		$scan_data = $this->scan_single_post( $post_id );
+		$results   = array_merge( $results, $scan_data['items'] );
+		update_option( self::OPTION_RESULTS, $results );
+		if ( false !== get_option( self::OPTION_STATS, false ) ) {
+			$this->sync_result_counts_to_stats( $results );
+		}
+	}
+
+	/**
+	 * Determine whether a post type should be flagged for missing featured images.
 
 	/**
 	 * Determine whether a post type should be flagged for missing featured images.
@@ -1491,6 +2062,31 @@ class Kreativ_Broken_Image_Finder {
 	 * @param string $source Result source.
 	 * @return string
 	 */
+	private function get_finding_type( $row ) {
+		$source = isset( $row['source'] ) ? $row['source'] : '';
+		if ( 'missing_featured' === $source ) {
+			return 'missing_featured';
+		}
+		if ( 'media_library' === $source ) {
+			return 'missing_file';
+		}
+		$status = isset( $row['status_code'] ) ? (int) $row['status_code'] : 0;
+		return in_array( $status, array( 404, 410 ), true ) ? 'missing_url' : 'verify';
+	}
+
+	private function get_finding_label( $row ) {
+		switch ( $this->get_finding_type( $row ) ) {
+			case 'missing_featured':
+				return __( 'No featured image', 'kreativ-broken-image-finder' );
+			case 'missing_file':
+				return __( 'Missing local file', 'kreativ-broken-image-finder' );
+			case 'missing_url':
+				return __( 'URL reported missing', 'kreativ-broken-image-finder' );
+			default:
+				return __( 'Needs verification', 'kreativ-broken-image-finder' );
+		}
+	}
+
 	private function get_source_label( $source ) {
 		if ( 'featured' === $source ) {
 			return __( 'Featured image', 'kreativ-broken-image-finder' );
@@ -1644,6 +2240,14 @@ class Kreativ_Broken_Image_Finder {
 		}
 
 		$results = get_option( self::OPTION_RESULTS, array() );
+		$has_scan = false !== get_option( self::OPTION_STATS, false );
+		$finding_counts = array( 'missing_url' => 0, 'verify' => 0 );
+		foreach ( $results as $result ) {
+			$type = $this->get_finding_type( $result );
+			if ( isset( $finding_counts[ $type ] ) ) {
+				++$finding_counts[ $type ];
+			}
+		}
 		$settings = $this->get_settings();
 		$stats   = get_option(
 			self::OPTION_STATS,
@@ -1705,6 +2309,15 @@ class Kreativ_Broken_Image_Finder {
 			<h1><?php esc_html_e( 'Kreativ Broken Image Finder', 'kreativ-broken-image-finder' ); ?></h1>
 
 			<p><?php esc_html_e( 'Scan your posts, pages, custom post types and Media Library image files. The scan runs in the background in small chunks to avoid timeouts.', 'kreativ-broken-image-finder' ); ?></p>
+			<details class="kbif-guide" <?php echo $has_scan ? '' : 'open'; ?>>
+				<summary><?php esc_html_e( 'How to scan and fix findings', 'kreativ-broken-image-finder' ); ?></summary>
+				<ol>
+					<li><?php esc_html_e( 'Choose your featured-image rule below, then run a full scan. Large sites can take longer; keep this page open until the scan finishes.', 'kreativ-broken-image-finder' ); ?></li>
+					<li><?php esc_html_e( 'Review the source and field. A 404 or 410 means the server reported the URL missing; other errors can be temporary or caused by access restrictions.', 'kreativ-broken-image-finder' ); ?></li>
+					<li><?php esc_html_e( 'Open the affected item to repair the image. For custom fields, find the named field in its editor or field plugin. Recheck the item after saving.', 'kreativ-broken-image-finder' ); ?></li>
+				</ol>
+				<p><?php esc_html_e( 'Scanning does not change your content. Only published items in public post types and image attachments are scanned; images generated solely by themes or external services may not be included.', 'kreativ-broken-image-finder' ); ?></p>
+			</details>
 
 			<?php if ( $scanned ) : ?>
 				<div class="notice notice-success is-dismissible">
@@ -1806,6 +2419,51 @@ class Kreativ_Broken_Image_Finder {
 								<p class="description"><?php esc_html_e( 'One ID per line. Matching posts or media attachments are skipped.', 'kreativ-broken-image-finder' ); ?></p>
 							</td>
 						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Featured-image repair mode', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<select name="kbif_feature_generation_mode">
+									<option value="template" <?php selected( $settings['feature_generation_mode'], 'template' ); ?>><?php esc_html_e( 'Local title-card template (no AI)', 'kreativ-broken-image-finder' ); ?></option>
+									<option value="ai" <?php selected( $settings['feature_generation_mode'], 'ai' ); ?>><?php esc_html_e( 'OpenAI generated artwork', 'kreativ-broken-image-finder' ); ?></option>
+								</select>
+								<p class="description"><?php esc_html_e( 'The repair tool appears in post editors. It always creates a preview before changing the featured image.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Template label and colors', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<input type="text" class="regular-text" name="kbif_feature_template_label" value="<?php echo esc_attr( $settings['feature_template_label'] ); ?>" placeholder="<?php echo esc_attr( get_bloginfo( 'name' ) ); ?>" />
+								<p><label><?php esc_html_e( 'Primary', 'kreativ-broken-image-finder' ); ?> <input type="color" name="kbif_feature_template_primary_color" value="<?php echo esc_attr( $settings['feature_template_primary_color'] ); ?>" /></label>
+								<label style="margin-left:16px;"><?php esc_html_e( 'Accent', 'kreativ-broken-image-finder' ); ?> <input type="color" name="kbif_feature_template_accent_color" value="<?php echo esc_attr( $settings['feature_template_accent_color'] ); ?>" /></label></p>
+								<p class="description"><?php esc_html_e( 'Template mode creates an SVG locally from the post title and optional excerpt. Leave the label blank to use the site name.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Image size', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<select name="kbif_feature_image_size">
+									<?php foreach ( array( '1024x1024', '1536x1024', '1024x1536' ) as $image_size ) : ?>
+										<option value="<?php echo esc_attr( $image_size ); ?>" <?php selected( $settings['feature_image_size'], $image_size ); ?>><?php echo esc_html( $image_size ); ?></option>
+									<?php endforeach; ?>
+								</select>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'OpenAI API key', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<input type="password" class="regular-text" name="kbif_feature_api_key" value="<?php echo esc_attr( $settings['feature_api_key'] ); ?>" autocomplete="off" />
+								<p class="description"><?php esc_html_e( 'Used only in OpenAI mode. For production, define KBIF_OPENAI_API_KEY in wp-config.php or the server environment instead.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'OpenAI art direction', 'kreativ-broken-image-finder' ); ?></th>
+							<td>
+								<input type="text" class="regular-text" name="kbif_feature_model" value="<?php echo esc_attr( $settings['feature_model'] ); ?>" placeholder="gpt-image-1" />
+								<p><input type="text" class="regular-text" name="kbif_feature_image_style" value="<?php echo esc_attr( $settings['feature_image_style'] ); ?>" /></p>
+								<textarea class="large-text" rows="3" name="kbif_feature_prompt_suffix"><?php echo esc_textarea( $settings['feature_prompt_suffix'] ); ?></textarea>
+								<p class="description"><?php esc_html_e( 'Model, visual style, and an optional prompt suffix. These settings are ignored in local template mode.', 'kreativ-broken-image-finder' ); ?></p>
+							</td>
+						</tr>
 					</tbody>
 				</table>
 
@@ -1826,7 +2484,7 @@ class Kreativ_Broken_Image_Finder {
 						<td><?php echo esc_html( (int) $stats['total_images_found'] ); ?></td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Broken images found', 'kreativ-broken-image-finder' ); ?></th>
+						<th><?php esc_html_e( 'URL issues found (including unverified)', 'kreativ-broken-image-finder' ); ?></th>
 						<td>
 							<?php
 							$broken = (int) $stats['broken_images'];
@@ -1837,6 +2495,14 @@ class Kreativ_Broken_Image_Finder {
 							}
 							?>
 						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'URLs reported missing (404 or 410)', 'kreativ-broken-image-finder' ); ?></th>
+						<td><?php echo esc_html( $finding_counts['missing_url'] ); ?></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'URL checks needing verification', 'kreativ-broken-image-finder' ); ?></th>
+						<td><?php echo esc_html( $finding_counts['verify'] ); ?></td>
 					</tr>
 					<tr>
 						<th><?php esc_html_e( 'Posts without featured image', 'kreativ-broken-image-finder' ); ?></th>
@@ -1853,7 +2519,8 @@ class Kreativ_Broken_Image_Finder {
 				</tbody>
 			</table>
 
-			<h2 style="margin-top:2em;"><?php esc_html_e( 'Broken Images & Missing Featured Images Report', 'kreativ-broken-image-finder' ); ?></h2>
+			<h2 style="margin-top:2em;"><?php esc_html_e( 'Image Findings Report', 'kreativ-broken-image-finder' ); ?></h2>
+			<p><?php esc_html_e( 'A missing URL is reported by its server, not independently confirmed. Needs verification includes blocked requests, timeouts and other errors: open the URL and recheck before changing content.', 'kreativ-broken-image-finder' ); ?></p>
 
 			<!-- Filters -->
 			<form method="get" style="margin: 1em 0;">
@@ -1936,6 +2603,7 @@ class Kreativ_Broken_Image_Finder {
 							<th><?php esc_html_e( 'Image URL', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Error', 'kreativ-broken-image-finder' ); ?></th>
+							<th><?php esc_html_e( 'Finding', 'kreativ-broken-image-finder' ); ?></th>
 							<th><?php esc_html_e( 'Actions', 'kreativ-broken-image-finder' ); ?></th>
 						</tr>
 					</thead>
@@ -1961,8 +2629,14 @@ class Kreativ_Broken_Image_Finder {
 								</td>
 								<td><?php echo '' === $row['status_code'] ? '—' : esc_html( (int) $row['status_code'] ); ?></td>
 								<td><?php echo esc_html( $row['error'] ); ?></td>
+								<td><?php echo esc_html( $this->get_finding_label( $row ) ); ?></td>
 								<td>
 									<div class="kbif-actions">
+										<?php if ( 'attachment' !== $row['post_type'] && post_type_supports( $row['post_type'], 'thumbnail' ) ) : ?>
+											<a class="button button-small" href="<?php echo esc_url( get_edit_post_link( (int) $row['post_id'] ) ); ?>">
+												<?php esc_html_e( 'Repair featured image', 'kreativ-broken-image-finder' ); ?>
+											</a>
+										<?php endif; ?>
 										<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 											<input type="hidden" name="action" value="kbif_recheck_post">
 											<input type="hidden" name="post_id" value="<?php echo esc_attr( (int) $row['post_id'] ); ?>">
@@ -2041,6 +2715,7 @@ class Kreativ_Broken_Image_Finder {
 
 			<p style="margin-top:2em;font-size:12px;color:#6c757d;">
 				<?php esc_html_e( 'Made with KREATIV — helping you keep your content fresh and healthy.', 'kreativ-broken-image-finder' ); ?>
+				<a href="https://wordpress.org/support/plugin/kreativ-broken-image-finder/reviews/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Share your feedback on WordPress.org', 'kreativ-broken-image-finder' ); ?></a>
 			</p>
 		</div>
 		<?php

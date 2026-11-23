@@ -34,8 +34,7 @@ jQuery(function ($) {
             pointer = 0;
 
             if (total === 0) {
-                $('#kbif-progress-text').text('No items found to scan.');
-                running = false;
+                finishScan();
                 return;
             }
 
@@ -91,11 +90,18 @@ jQuery(function ($) {
             action: 'kbif_scan_step',
             step: 'finish',
             nonce: KBIF_Ajax.nonce
-        }).always(function () {
-            // Reload page with flag so we can show a notice.
+        }).done(function (response) {
+            if (!response || !response.success) {
+                $('#kbif-progress-text').text('Could not save the scan. Please run it again.');
+                running = false;
+                return;
+            }
             const url = new URL(window.location.href);
             url.searchParams.set('kbif_scanned', '1');
             window.location.href = url.toString();
+        }).fail(function () {
+            $('#kbif-progress-text').text('Could not save the scan. Please run it again.');
+            running = false;
         });
     }
 });
