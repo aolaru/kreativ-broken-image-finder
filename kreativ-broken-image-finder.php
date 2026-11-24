@@ -3,7 +3,7 @@
  * Plugin Name:       Kreativ Broken Image Finder
  * Plugin URI:        https://kreativwp.com/plugins/kreativ-broken-image-finder/
  * Description:       Scan your site for broken images, then create preview-first repairs for missing or broken featured images.
- * Version:           1.4.0
+ * Version:           1.3.1
  * Author:            Andrei Olaru
  * Author URI:        https://kreativwp.com/
  * Text Domain:       kreativ-broken-image-finder
@@ -21,7 +21,7 @@ if ( ! class_exists( 'Kreativ_Broken_Image_Finder' ) ) :
 
 class Kreativ_Broken_Image_Finder {
 
-	const VERSION         = '1.4.0';
+	const VERSION         = '1.3.1';
 	const OPTION_RESULTS  = 'kbif_last_scan_results';
 	const OPTION_STATS    = 'kbif_last_scan_stats';
 	const OPTION_QUEUE    = 'kbif_scan_queue';

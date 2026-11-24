@@ -4,7 +4,7 @@ Tags: broken images, image scanner, custom fields, media library, 404
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.4.0
+Stable tag: 1.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -90,25 +90,21 @@ The scan runs only when manually triggered from the admin dashboard and does not
 
 == Upgrade Notice ==
 
-= 1.4.0 =
-Adds preview-first featured-image repair with local title-card templates and optional OpenAI artwork.
-
 = 1.3.1 =
-Clarifies missing and unverified findings and adds scan and repair guidance.
+Adds preview-first featured-image repair with local and optional AI-generated images, and improves scan guidance.
 
 = 1.3.0 =
 Adds expanded image detection, Media Library file checks, ignore rules, single-item recheck actions, and CSV export.
 
 == Changelog ==
 
-= 1.4.0 =
+= 1.3.1 =
 * Added a Feature Image Repair box to supported post editors.
 * Added pending preview, accept, regenerate and discard workflows for feature-image repairs.
 * Added local PNG title-card generation with configurable label, colors and image size.
 * Added optional OpenAI and WordPress AI Client artwork generation, with an environment-variable API-key override for OpenAI.
 * Added a repair shortcut to findings for post types that support featured images.
 
-= 1.3.1 =
 * Distinguish URLs reported missing, missing local files, missing featured images and checks needing verification in reports and CSV exports.
 * Add first-scan and source-specific repair guidance.
 * Avoid reporting a successful scan when saving results fails.
