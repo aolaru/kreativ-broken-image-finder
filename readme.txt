@@ -22,7 +22,7 @@ Find image issues visitors see, then jump straight to the affected content. Krea
 * Distinguish URLs reported missing from checks that need verification
 * Repair missing or broken featured images with a local title-card preview
 
-Scanning runs on your WordPress site with core APIs: no external service, tracking or cookies. Optional OpenAI image generation is used only when explicitly enabled for featured-image repairs.
+Scanning runs on your WordPress site with core APIs: no external service, tracking or cookies. AI image generation is optional and requires an administrator to select and use a provider.
 
 == Features ==
 
@@ -33,8 +33,8 @@ Scanning runs on your WordPress site with core APIs: no external service, tracki
 * Filter by post type, source and status; recheck or ignore individual findings
 * Export filtered results to CSV and scan from WP-CLI with `wp kbif scan`
 * Use relative and protocol-relative URLs with no external services or tracking
-* Create a local SVG title-card preview to repair a missing or broken featured image
-* Optionally generate an OpenAI artwork preview, then accept or discard it before changing the featured image
+* Create a local PNG title-card preview to repair a missing or broken featured image
+* Optionally generate an artwork preview with OpenAI or the WordPress AI Client, then accept or discard it before changing the featured image
 
 == Installation ==
 
@@ -52,7 +52,7 @@ No. The plugin never changes content automatically. For featured-image findings,
 
 = How does featured-image repair work? =
 
-Open the affected item with the "Repair featured image" action. The editor sidebar includes a Feature Image Repair box that creates a pending preview from the post title and optional excerpt. Local template mode is the default and does not use AI or an API key. OpenAI mode is optional and requires an API key, either in the plugin settings or as `KBIF_OPENAI_API_KEY` in `wp-config.php` or the server environment.
+An administrator can open the affected item with the "Repair featured image" action. The editor sidebar includes a Feature Image Repair box. Local template mode is the default and uses PHP GD, not AI. OpenAI mode requires an API key in settings or as `KBIF_OPENAI_API_KEY` in `wp-config.php` or the server environment. WordPress AI mode requires WordPress 7.0 or a compatible AI Client and a configured image-capable provider. Only public, password-free published posts can be used; previews are stored in the Media Library and may be publicly accessible.
 
 = How does the plugin detect broken images? =
 
@@ -76,7 +76,7 @@ Yes. You can run a full scan from the command line with `wp kbif scan`. You can 
 
 = Does it use any external services or APIs? =
 
-Image checks use WordPress core HTTP functions. Featured-image repair uses no external service in local template mode. OpenAI is contacted only when an administrator selects OpenAI artwork mode and generates a preview.
+Image checks use WordPress core HTTP functions. Featured-image repair uses no external service in local template mode. When an administrator generates an AI preview, the post title, excerpt, up to 900 characters of post content, and configured art direction are sent to the selected provider; charges may apply. OpenAI mode sends this data to OpenAI: https://openai.com/policies/terms-of-use/ and https://openai.com/policies/privacy-policy/. WordPress AI mode sends it to the site's configured provider, whose own terms and privacy policy apply.
 
 = Will it slow down my site? =
 
@@ -104,8 +104,8 @@ Adds expanded image detection, Media Library file checks, ignore rules, single-i
 = 1.4.0 =
 * Added a Feature Image Repair box to supported post editors.
 * Added pending preview, accept, regenerate and discard workflows for feature-image repairs.
-* Added local SVG title-card generation with configurable label, colors and image size.
-* Added optional OpenAI artwork generation with an environment-variable API-key override.
+* Added local PNG title-card generation with configurable label, colors and image size.
+* Added optional OpenAI and WordPress AI Client artwork generation, with an environment-variable API-key override for OpenAI.
 * Added a repair shortcut to findings for post types that support featured images.
 
 = 1.3.1 =
