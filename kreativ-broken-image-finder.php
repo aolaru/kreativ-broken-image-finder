@@ -78,7 +78,7 @@ class Kreativ_Broken_Image_Finder {
 			'kreativ-broken-image-finder',
 			array( $this, 'render_admin_page' ),
 			'dashicons-format-image',
-			66
+			81
 		);
 	}
 
