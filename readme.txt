@@ -2,7 +2,7 @@
 Contributors: anolaru
 Tags: broken images, image scanner, custom fields, media library, 404
 Requires at least: 5.0
-Tested up to: 6.9
+Tested up to: 7.1
 Requires PHP: 7.4
 Stable tag: 1.3.1
 License: GPLv2 or later
@@ -34,13 +34,13 @@ Scanning runs on your WordPress site with core APIs: no external service, tracki
 * Export filtered results to CSV and scan from WP-CLI with `wp kbif scan`
 * Use relative and protocol-relative URLs with no external services or tracking
 * Create a local PNG title-card preview to repair a missing or broken featured image
-* Optionally generate an artwork preview with OpenAI or the WordPress AI Client, then accept or discard it before changing the featured image
+* Optionally generate an artwork preview with the WordPress AI Client, then accept or discard it before changing the featured image
 
 == Installation ==
 
 1. Upload the plugin ZIP via *Plugins -> Add New -> Upload Plugin*.
 2. Activate **Kreativ Broken Image Finder**.
-3. Go to **Kreativ Broken Image Finder** in the WordPress admin menu.
+3. Go to **Broken Image Finder** in the WordPress admin menu.
 4. Optionally configure the missing featured image rule and feature-image repair mode.
 5. Click **Run Full Scan** and wait for the results.
 
@@ -48,11 +48,11 @@ Scanning runs on your WordPress site with core APIs: no external service, tracki
 
 = Does this plugin automatically fix broken images? =
 
-No. The plugin never changes content automatically. For featured-image findings, it can create a local title-card or optional AI preview in the post editor. An editor must explicitly accept that preview before it replaces or adds the featured image.
+No. The plugin never changes content automatically. For featured-image findings, it can create a local title-card or optional AI preview in the post editor. An administrator must explicitly accept that preview before it replaces or adds the featured image.
 
 = How does featured-image repair work? =
 
-An administrator can open the affected item with the "Repair featured image" action. The editor sidebar includes a Feature Image Repair box. Local template mode is the default and uses PHP GD, not AI. OpenAI mode requires an API key in settings or as `KBIF_OPENAI_API_KEY` in `wp-config.php` or the server environment. WordPress AI mode requires WordPress 7.0 or a compatible AI Client and a configured image-capable provider. Only public, password-free published posts can be used; previews are stored in the Media Library and may be publicly accessible.
+An administrator can open the affected item with the "Repair featured image" action. The editor sidebar includes a Feature Image Repair box. Local template mode is the default and uses PHP GD with FreeType, not AI. It creates a title card with the post title, optional excerpt, site label and configured colors. WordPress AI mode requires WordPress 7.0 or a compatible AI Client and a configured image-capable provider. Only public, password-free published posts can be used; previews are stored in the Media Library and may be publicly accessible.
 
 = How does the plugin detect broken images? =
 
@@ -76,7 +76,7 @@ Yes. You can run a full scan from the command line with `wp kbif scan`. You can 
 
 = Does it use any external services or APIs? =
 
-Image checks use WordPress core HTTP functions. Featured-image repair uses no external service in local template mode. When an administrator generates an AI preview, the post title, excerpt, up to 900 characters of post content, and configured art direction are sent to the selected provider; charges may apply. OpenAI mode sends this data to OpenAI: https://openai.com/policies/terms-of-use/ and https://openai.com/policies/privacy-policy/. WordPress AI mode sends it to the site's configured provider, whose own terms and privacy policy apply.
+Image checks use WordPress core HTTP functions. Featured-image repair uses no external service in local template mode. When an administrator generates an AI preview, the post title, excerpt, up to 900 characters of post content, and configured art direction are sent to the site's configured WordPress AI provider; charges may apply and the provider's terms and privacy policy apply.
 
 = Will it slow down my site? =
 
@@ -102,9 +102,9 @@ Adds expanded image detection, Media Library file checks, ignore rules, single-i
 * Added a Feature Image Repair box to supported post editors.
 * Added pending preview, accept, regenerate and discard workflows for feature-image repairs.
 * Added local PNG title-card generation with configurable label, colors and image size.
-* Added optional OpenAI and WordPress AI Client artwork generation, with an environment-variable API-key override for OpenAI.
+* Added optional WordPress AI Client artwork generation.
+* Bundled Lato Regular by Lukasz Dziedzic under the SIL Open Font License 1.1 (see assets/fonts/OFL.txt).
 * Added a repair shortcut to findings for post types that support featured images.
-
 * Distinguish URLs reported missing, missing local files, missing featured images and checks needing verification in reports and CSV exports.
 * Add first-scan and source-specific repair guidance.
 * Avoid reporting a successful scan when saving results fails.
